@@ -4,8 +4,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from pydantic import create_model
 
 from . import ollama
-from .definitions import AGENTS, OPTIONAL_AGENTS, SCHEMAS, scene_count_check, system_prompt, user_prompt
+from .definitions import AGENTS, DETAIL, OPTIONAL_AGENTS, SCHEMAS, scene_count_check, system_prompt, user_prompt
 from .schemas import SceneProject
+
+LIMITS = {"eyebrow": 32, "button": 32, "query": 60, "label": 48, "post": 180, "headline": 70, "subline": 140}
 
 FAST_STEPS = [["Orchestrator", "Planner"], ["Copywriter", "Designer", "Director"]]
 DEFAULT_DESIGN = {"primaryColor": "#7CFFCB", "accentColor": "#55D6FF", "background": "#0B1016", "font": "Outfit"}
@@ -19,7 +21,10 @@ def assemble(outputs: Dict[str, Any], aspect_ratio: str) -> Dict[str, Any]:
     for i, planned in enumerate(plan["scenes"]):
         text = copy["scenes"][i] if i < len(copy["scenes"]) else {"headline": planned["purpose"][:60]}
         motion = direct[i] if i < len(direct) else {"transition": "fade", "motion": "rise", "durationSec": planned["durationSec"]}
-        props = {k: v for k, v in text.items() if v not in ("", [], None)}
+        props = {k: v for k, v in text.items() if v not in ("", [], None) and k != "detail"}
+        key = DETAIL[planned["template"]][0]
+        if text.get("detail"):
+            props[key] = text["detail"][:LIMITS.get(key, 180)]
         props.update(transition=motion["transition"], motion=motion["motion"])
         scenes.append({"template": planned["template"], "durationSec": round(float(motion["durationSec"]), 1), "props": props})
     project = {"title": copy["title"], "aspectRatio": aspect_ratio, "brand": {"name": orch["productName"], **design}, "scenes": scenes}
@@ -28,7 +33,7 @@ def assemble(outputs: Dict[str, Any], aspect_ratio: str) -> Dict[str, Any]:
 
 def apply_fixes(project: Dict[str, Any], critic: Dict[str, Any]) -> Dict[str, Any]:
     for fix in critic.get("fixes", []):
-        if fix["sceneIndex"] < len(project["scenes"]):
+        if fix["sceneIndex"] < len(project["scenes"]) and len(fix["value"]) <= LIMITS.get(fix["field"], 70):
             project["scenes"][fix["sceneIndex"]]["props"][fix["field"]] = fix["value"]
     return project
 

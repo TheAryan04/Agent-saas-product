@@ -27,14 +27,10 @@ class PlannerOut(BaseModel):
 
 class CopyScene(BaseModel):
     headline: str = Field(min_length=1, max_length=70)
-    subline: str = Field(default="", max_length=140)
-    eyebrow: str = Field(default="", max_length=32)
+    subline: str = Field(max_length=140)
+    detail: str = Field(max_length=180)
     steps: List[str] = Field(default_factory=list, max_length=4)
-    button: str = Field(default="", max_length=32)
-    label: str = Field(default="", max_length=48)
-    query: str = Field(default="", max_length=60)
-    post: str = Field(default="", max_length=180)
-    voiceover: str = Field(default="", max_length=220)
+    voiceover: str = Field(max_length=160)
 
 
 class CopywriterOut(BaseModel):

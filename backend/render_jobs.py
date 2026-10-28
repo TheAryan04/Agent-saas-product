@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import uuid
 import wave
 from datetime import datetime, timezone
@@ -73,6 +74,23 @@ async def make_captions(project: Dict[str, Any], public: Path) -> List[Dict[str,
 class RenderJobs:
     def __init__(self, db):
         self.col = db.render_jobs
+        self.procs: Dict[str, Any] = {}
+        self.cancelled: set = set()
+
+    async def cancel(self, job_id: str) -> Optional[Dict[str, Any]]:
+        job = await self.get(job_id)
+        if not job or job["status"] not in ("queued", "running"):
+            return job
+        self.cancelled.add(job_id)
+        proc = self.procs.get(job_id)
+        if proc and proc.returncode is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        await self._set(job_id, status="cancelled", stage="Render cancelled")
+        return await self.get(job_id)
+
+    def _check(self, job_id: str):
+        if job_id in self.cancelled:
+            raise asyncio.CancelledError()
 
     async def create(self, project: Dict[str, Any], voiceover: bool, captions: bool) -> Dict[str, Any]:
         job = {"id": str(uuid.uuid4()), "status": "queued", "stage": "Waiting for the renderer", "progress": 0.0,
@@ -94,28 +112,40 @@ class RenderJobs:
             public = job_dir / "public"
             public.mkdir(parents=True, exist_ok=True)
             try:
+                self._check(job_id)
                 if voiceover:
                     await self._set(job_id, status="running", stage="Synthesizing voiceover with Piper")
                     await make_voiceover(project, public)
                 if voiceover and captions:
                     await self._set(job_id, status="running", stage="Transcribing captions with whisper.cpp")
                     project["captions"] = await make_captions(project, public)
+                self._check(job_id)
                 props = job_dir / "props.json"
                 props.write_text(json.dumps({"project": project}))
                 out = job_dir / "film.mp4"
                 await self._set(job_id, status="running", stage="Bundling composition")
                 await self._remotion(job_id, props, out, public)
                 await self._set(job_id, status="done", stage="MP4 ready", progress=1.0, download_url=f"/api/render/{job_id}/download")
-            except Exception as exc:
-                await self._set(job_id, status="error", stage="Render failed", error=str(exc)[-600:])
+            except (asyncio.CancelledError, Exception) as exc:
+                if job_id in self.cancelled:
+                    await self._set(job_id, status="cancelled", stage="Render cancelled", progress=0.0)
+                    shutil.rmtree(job_dir, ignore_errors=True)
+                else:
+                    await self._set(job_id, status="error", stage="Render failed", error=str(exc)[-600:])
+            finally:
+                self.procs.pop(job_id, None)
+                self.cancelled.discard(job_id)
 
     async def _remotion(self, job_id: str, props: Path, out: Path, public: Path):
         proc = await asyncio.create_subprocess_exec("node", str(RENDERER_SCRIPT), str(props), str(out), str(public),
-                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=os.environ.copy())
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
+        self.procs[job_id] = proc
         tail = []
         async for raw in proc.stdout:
             line = raw.decode().strip()
             tail = (tail + [line])[-15:]
+            if job_id in self.cancelled:
+                continue
             if line.startswith("PROGRESS "):
                 await self._set(job_id, progress=round(float(line.split()[1]), 3), stage="Rendering frames")
             elif line.startswith("STAGE "):

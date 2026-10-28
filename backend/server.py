@@ -151,6 +151,14 @@ async def render_status(job_id: str):
     return job
 
 
+@api.post("/render/{job_id}/cancel")
+async def render_cancel(job_id: str):
+    job = await jobs.cancel(job_id)
+    if not job:
+        raise HTTPException(404, "Render job not found")
+    return job
+
+
 @api.get("/render/{job_id}/download")
 async def render_download(job_id: str):
     job = await jobs.get(job_id)

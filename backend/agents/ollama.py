@@ -25,7 +25,7 @@ def inline_schema(model: Type[BaseModel]) -> Dict[str, Any]:
         if isinstance(node, dict):
             if "$ref" in node:
                 return walk(defs[node["$ref"].split("/")[-1]])
-            return {key: walk(value) for key, value in node.items() if key != "title"}
+            return {key: walk(value) for key, value in node.items() if not (key == "title" and isinstance(value, str))}
         if isinstance(node, list):
             return [walk(item) for item in node]
         return node
@@ -44,7 +44,7 @@ async def health() -> Dict[str, Any]:
 
 
 async def stream_chat(model: str, messages: List[Dict[str, str]], schema: Dict[str, Any]) -> AsyncIterator[str]:
-    payload = {"model": model, "messages": messages, "format": schema, "stream": True, "keep_alive": "30m", "options": {"temperature": 0.2, "num_ctx": 4096}}
+    payload = {"model": model, "messages": messages, "format": schema, "stream": True, "keep_alive": "30m", "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 1200}}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(600, connect=5)) as client:
             async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload) as response:

@@ -2,7 +2,7 @@ import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 export const MONO = "'DM Mono', 'JetBrains Mono', ui-monospace, monospace";
-export const font = (brand) => `'${brand.font || "Outfit"}', 'Outfit', system-ui, sans-serif`;
+export const font = (brand) => `'${brand.font || "Outfit"}', 'Outfit', sans-serif`;
 
 export function useUnit() {
   const { width, height } = useVideoConfig();

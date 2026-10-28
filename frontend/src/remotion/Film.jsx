@@ -2,6 +2,7 @@ import React from "react";
 import { AbsoluteFill, Audio, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { TEMPLATES } from "./templates";
 import { Backdrop, MONO, font, useUnit } from "./parts";
+import { useBrandFont } from "./fonts";
 
 export const FPS = 30;
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" };
@@ -45,6 +46,7 @@ function Captions({ captions, brand }) {
 }
 
 export function Film({ project }) {
+  useBrandFont(project.brand.font);
   let from = 0;
   return <AbsoluteFill style={{ fontFamily: font(project.brand), overflow: "hidden" }}>
     <Backdrop brand={project.brand} />
