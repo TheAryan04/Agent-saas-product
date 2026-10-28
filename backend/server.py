@@ -1,156 +1,168 @@
-import asyncio
 import json
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+
+from fastapi import APIRouter, FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+
+from agents import ollama, pipeline  # noqa: E402
+from agents.definitions import AGENTS  # noqa: E402
+from agents.schemas import SceneProject  # noqa: E402
+from render_jobs import RENDER_DIR, RenderJobs, capabilities  # noqa: E402
+
 mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = mongo_client[os.environ["DB_NAME"]]
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
+jobs = RenderJobs(db)
 
 app = FastAPI(title="Frameforge Local Studio")
 api = APIRouter(prefix="/api")
 logger = logging.getLogger("frameforge")
 
-AGENTS = ["Orchestrator", "Planner", "Copywriter", "Designer", "Director", "Critic"]
-TEMPLATES = ["TextReveal", "Flowchart", "SocialMockup", "SearchBar", "DeviceMockup", "CallToAction"]
+SEED = {
+    "title": "Orbit — Ship better, together",
+    "aspectRatio": "16:9",
+    "brand": {"name": "Orbit", "primaryColor": "#7CFFCB", "accentColor": "#55D6FF", "background": "#0B1016", "font": "Outfit"},
+    "scenes": [
+        {"template": "TextReveal", "durationSec": 2.5, "props": {"headline": "Ship better, together", "eyebrow": "ORBIT WORKSPACE", "subline": "A calm home for product teams.", "transition": "fade", "motion": "rise"}},
+        {"template": "Flowchart", "durationSec": 3, "props": {"headline": "From idea to impact", "steps": ["Plan", "Build", "Launch"], "transition": "slide", "motion": "pop"}},
+        {"template": "DeviceMockup", "durationSec": 3, "props": {"headline": "One calm command center", "label": "orbit.app / workspace", "transition": "zoom", "motion": "drift"}},
+        {"template": "CallToAction", "durationSec": 2.5, "props": {"headline": "Make momentum visible", "button": "Start your next sprint", "transition": "wipe", "motion": "pop"}},
+    ],
+}
+
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=4000)
     aspect_ratio: str = "16:9"
     fast_mode: bool = False
+    models: Dict[str, str] = {}
+    enabled: Dict[str, bool] = {}
+
+
+class ContinueRequest(GenerateRequest):
+    from_agent: str
+    outputs: Dict[str, Any]
+
 
 class ProjectRequest(BaseModel):
     name: str
     scene_json: Dict[str, Any]
     agent_outputs: Dict[str, Any] = {}
 
-class Scene(BaseModel):
-    template: str
-    durationSec: float
-    props: Dict[str, Any] = {}
 
-class SceneProject(BaseModel):
-    title: str
-    aspectRatio: str
-    brand: Dict[str, str]
-    scenes: List[Scene]
+class RenderRequest(BaseModel):
+    project: SceneProject
+    voiceover: bool = False
+    captions: bool = False
 
-SEED = {
-    "title": "Orbit — Ship better, together",
-    "aspectRatio": "16:9",
-    "brand": {"name": "Orbit", "primaryColor": "#7CFFCB", "font": "Outfit"},
-    "scenes": [
-        {"template": "TextReveal", "durationSec": 2.5, "props": {"headline": "Ship better, together", "eyebrow": "ORBIT WORKSPACE"}},
-        {"template": "Flowchart", "durationSec": 3, "props": {"headline": "From idea to impact", "steps": ["Plan", "Build", "Launch"]}},
-        {"template": "DeviceMockup", "durationSec": 3, "props": {"headline": "One calm command center", "label": "orbit.app / workspace"}},
-        {"template": "CallToAction", "durationSec": 2.5, "props": {"headline": "Make momentum visible", "button": "Start your next sprint"}},
-    ],
-}
 
-def sse(payload: Dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+def sse_response(events):
+    async def body():
+        async for event in events:
+            yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+    return StreamingResponse(body(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-def fallback_project(request: GenerateRequest) -> Dict[str, Any]:
-    name = request.prompt.strip().split()[0].title() if request.prompt.strip() else "Orbit"
-    project = json.loads(json.dumps(SEED))
-    project["title"] = f"{name} — a clearer way forward"
-    project["aspectRatio"] = request.aspect_ratio
-    project["brand"]["name"] = name
-    project["scenes"][0]["props"]["headline"] = f"{name}, made clear"
-    return project
-
-async def ollama_generate(prompt: str, model: str = DEFAULT_MODEL) -> Optional[Dict[str, Any]]:
-    schema = {"type": "object", "properties": {"project": {"type": "object"}}, "required": ["project"]}
-    payload = {"model": model, "prompt": prompt, "format": schema, "stream": False, "keep_alive": "30m", "options": {"temperature": 0.2}}
-    try:
-        async with httpx.AsyncClient(timeout=45) as client:
-            response = await client.post(f"{OLLAMA_URL}/api/generate", json=payload)
-            response.raise_for_status()
-            raw = response.json().get("response", "{}")
-            return json.loads(raw)
-    except Exception as exc:
-        logger.info("Ollama unavailable, using seed-safe local draft: %s", exc)
-        return None
 
 @api.get("/")
 async def root():
-    return {"message": "Frameforge local studio ready", "ollama": OLLAMA_URL}
+    return {"message": "Frameforge local studio ready", "ollama": ollama.OLLAMA_URL}
+
 
 @api.get("/health/ollama")
 async def ollama_health():
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-            models = [item.get("name") for item in response.json().get("models", [])]
-            return {"running": True, "model": DEFAULT_MODEL, "model_pulled": any(DEFAULT_MODEL in item for item in models), "models": models, "fix": f"ollama pull {DEFAULT_MODEL}"}
-    except Exception:
-        return {"running": False, "model": DEFAULT_MODEL, "model_pulled": False, "models": [], "fix": f"ollama serve && ollama pull {DEFAULT_MODEL}"}
+    return await ollama.health()
+
 
 @api.get("/projects")
 async def list_projects():
-    docs = await db.projects.find({}, {"_id": 0}).sort("updated_at", -1).to_list(20)
-    if not docs:
-        return [{"id": "seed-orbit", "name": "Orbit launch film", "updated_at": "Just now", "scene_json": SEED, "agent_outputs": {}}]
-    return docs
+    docs = await db.projects.find({}, {"_id": 0}).sort("updated_at", -1).to_list(50)
+    return docs or [{"id": "seed-orbit", "name": "Orbit launch film", "updated_at": "Just now", "scene_json": SEED, "agent_outputs": {}}]
+
 
 @api.post("/projects")
 async def save_project(request: ProjectRequest):
     doc = {"id": str(uuid.uuid4()), "name": request.name, "scene_json": request.scene_json, "agent_outputs": request.agent_outputs, "updated_at": datetime.now(timezone.utc).isoformat()}
-    await db.projects.insert_one(doc)
-    return {key: value for key, value in doc.items() if key != "_id"}
+    await db.projects.insert_one(dict(doc))
+    return doc
+
 
 @api.post("/projects/{project_id}/duplicate")
 async def duplicate_project(project_id: str):
     source = await db.projects.find_one({"id": project_id}, {"_id": 0})
-    if not source and project_id == "seed-orbit": source = {"name": "Orbit launch film", "scene_json": SEED, "agent_outputs": {}}
-    if not source: raise HTTPException(404, "Project not found")
-    source["id"] = str(uuid.uuid4()); source["name"] = f"{source['name']} copy"; source["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.projects.insert_one(source)
-    return {key: value for key, value in source.items() if key != "_id"}
+    if not source and project_id == "seed-orbit":
+        source = {"name": "Orbit launch film", "scene_json": SEED, "agent_outputs": {}}
+    if not source:
+        raise HTTPException(404, "Project not found")
+    source.update(id=str(uuid.uuid4()), name=f"{source['name']} copy", updated_at=datetime.now(timezone.utc).isoformat())
+    await db.projects.insert_one(dict(source))
+    return source
+
 
 @api.post("/pipeline/stream")
 async def pipeline_stream(request: GenerateRequest):
-    async def events():
-        started = time.perf_counter()
-        project = fallback_project(request)
-        active_agents = ["Orchestrator + Planner", "Copywriter + Designer + Director"] if request.fast_mode else AGENTS
-        outputs = {}
-        for index, agent in enumerate(active_agents):
-            yield sse({"type": "agent", "name": agent, "status": "running", "index": index})
-            await asyncio.sleep(0.18)
-            if index == 0 and not request.fast_mode:
-                result = {"productName": project["brand"]["name"], "audience": "product teams", "tone": "precise and optimistic", "durationSec": 11, "aspectRatio": request.aspect_ratio}
-            elif agent == "Critic":
-                result = {"approved": True, "issues": []}
-            else:
-                result = {"status": "validated", "scenes": len(project["scenes"]), "note": "Structured output ready for the next agent"}
-            outputs[agent] = result
-            yield sse({"type": "agent", "name": agent, "status": "done", "elapsed": round(time.perf_counter() - started, 2), "output": result})
-        yield sse({"type": "complete", "project": project, "outputs": outputs})
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return sse_response(pipeline.run(request.prompt, request.aspect_ratio, request.fast_mode, request.models, request.enabled))
+
+
+@api.post("/pipeline/continue")
+async def pipeline_continue(request: ContinueRequest):
+    if request.from_agent not in AGENTS:
+        raise HTTPException(400, f"Unknown agent {request.from_agent}")
+    outputs = dict(request.outputs)
+    errors = pipeline.validate_outputs(outputs, request.from_agent)
+    if errors:
+        raise HTTPException(422, {"message": "Edited output does not match the agent schema", "errors": errors})
+    return sse_response(pipeline.run(request.prompt, request.aspect_ratio, False, request.models, request.enabled, outputs, request.from_agent))
+
+
+@api.get("/render/capabilities")
+async def render_capabilities():
+    return capabilities()
+
 
 @api.post("/render")
-async def render_project(project: SceneProject):
-    return {"status": "ready", "message": "Local Remotion render is queued", "download_url": None, "estimated_seconds": max(4, round(sum(scene.durationSec for scene in project.scenes) * 0.8))}
+async def render_project(request: RenderRequest):
+    caps = capabilities()
+    if not caps["remotion"]:
+        raise HTTPException(503, "Remotion renderer is not available. Run `yarn install` in frontend/.")
+    if request.voiceover and not caps["piper"]:
+        raise HTTPException(400, caps["piper_fix"])
+    if request.captions and (not request.voiceover or not caps["whisper"]):
+        raise HTTPException(400, "Captions need voiceover enabled and whisper.cpp installed. " + caps["whisper_fix"])
+    return await jobs.create(request.project.model_dump(exclude_none=True), request.voiceover, request.captions)
+
+
+@api.get("/render/{job_id}")
+async def render_status(job_id: str):
+    job = await jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Render job not found")
+    return job
+
+
+@api.get("/render/{job_id}/download")
+async def render_download(job_id: str):
+    job = await jobs.get(job_id)
+    path = RENDER_DIR / job_id / "film.mp4"
+    if not job or job["status"] != "done" or not path.exists():
+        raise HTTPException(404, "MP4 not ready")
+    return FileResponse(path, media_type="video/mp4", filename="frameforge-film.mp4")
+
 
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
+
 
 @app.on_event("shutdown")
 async def shutdown():

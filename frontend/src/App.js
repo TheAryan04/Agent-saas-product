@@ -1,60 +1,83 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import { Activity, Check, ChevronDown, ChevronRight, CircleHelp, Copy, Download, Film, FolderOpen, Gauge, GripVertical, Layers3, MonitorPlay, MoreHorizontal, Plus, RefreshCw, Save, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { CircleHelp, Download, Film, FolderOpen, Gauge, Layers3, Save, Settings2, Sparkles, TerminalSquare, X } from "lucide-react";
 import "@/App.css";
+import { AGENTS, API, loadSettings, saveSettings } from "./lib/api";
+import { SEED_PROJECT } from "./remotion/seed";
+import { sceneFrames } from "./remotion/Film";
+import { usePipeline } from "./hooks/usePipeline";
+import { IconButton, Pill, Switch } from "./components/studio/Controls";
+import { Preview } from "./components/studio/Preview";
+import { AgentTimeline } from "./components/studio/AgentTimeline";
+import { SceneEditor } from "./components/studio/SceneEditor";
+import { ExportDialog } from "./components/studio/ExportDialog";
+import { ProjectsView } from "./components/studio/ProjectsView";
+import { SettingsView } from "./components/studio/SettingsView";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const AGENTS = ["Orchestrator", "Planner", "Copywriter", "Designer", "Director", "Critic"];
-const TEMPLATES = ["TextReveal", "Flowchart", "SocialMockup", "SearchBar", "DeviceMockup", "CallToAction"];
-const seed = { title: "Orbit — Ship better, together", aspectRatio: "16:9", brand: { name: "Orbit", primaryColor: "#7CFFCB", font: "Outfit" }, scenes: [{ template: "TextReveal", durationSec: 2.5, props: { headline: "Ship better, together", eyebrow: "ORBIT WORKSPACE" } }, { template: "Flowchart", durationSec: 3, props: { headline: "From idea to impact", steps: ["Plan", "Build", "Launch"] } }, { template: "DeviceMockup", durationSec: 3, props: { headline: "One calm command center", label: "orbit.app / workspace" } }, { template: "CallToAction", durationSec: 2.5, props: { headline: "Make momentum visible", button: "Start your next sprint" } }] };
-
-function IconButton({ label, children, onClick, active = false }) { return <button data-testid={`icon-${label.toLowerCase().replaceAll(" ", "-")}`} className={`icon-button ${active ? "active" : ""}`} aria-label={label} title={label} onClick={onClick}>{children}</button>; }
-function Pill({ children, tone = "neutral" }) { return <span data-testid="status-pill" className={`pill ${tone}`}>{children}</span>; }
-
-function Preview({ project, playing, onToggle }) {
-  const [progress, setProgress] = useState(34);
-  useEffect(() => { if (!playing) return; const timer = setInterval(() => setProgress((value) => value >= 100 ? 0 : value + 1), 80); return () => clearInterval(timer); }, [playing]);
-  const scene = project.scenes[Math.min(project.scenes.length - 1, Math.floor(progress / 25))] || project.scenes[0];
-  return <section className="preview-wrap" data-testid="video-preview-panel">
-    <div className="preview-topline"><div className="eyebrow"><span className="live-dot" /> LIVE PREVIEW <span className="muted">/ 1280 × 720 · 24 FPS</span></div><Pill tone="ready">DRAFT READY</Pill></div>
-    <div className={`preview-canvas ratio-${project.aspectRatio.replace(":", "-")}`} data-testid="video-preview-canvas">
-      <div className="scanline" /><div className="canvas-grid" />
-      <div className="preview-content"><span className="preview-eyebrow">{scene?.props?.eyebrow || project.brand.name.toUpperCase()} <span>✦</span></span><h2 style={{ color: project.brand.primaryColor }}>{scene?.props?.headline || project.title}</h2><p>{scene?.props?.label || "A short story for teams moving with intention."}</p>{scene?.template === "Flowchart" && <div className="flow-steps">{(scene.props.steps || []).map((step, index) => <span key={step}><b>{String(index + 1).padStart(2, "0")}</b>{step}{index < 2 && <i>→</i>}</span>)}</div>}{scene?.template === "DeviceMockup" && <div className="device-art"><div className="device-bar" /><div className="device-lines"><i /><i /><i /><i /></div></div>}{scene?.template === "CallToAction" && <button className="canvas-cta" style={{ background: project.brand.primaryColor }}>{scene.props.button || "Get started"} <ChevronRight size={14} /></button>}</div>
-      <div className="canvas-brand">{project.brand.name}<span>●</span></div><div className="canvas-count">{String(Math.min(project.scenes.length, Math.floor(progress / 25) + 1)).padStart(2, "0")} <span>/ {String(project.scenes.length).padStart(2, "0")}</span></div>
-    </div>
-    <div className="player-controls"><IconButton label={playing ? "Pause preview" : "Play preview"} onClick={onToggle}>{playing ? <span className="pause-bars">Ⅱ</span> : <span className="play-triangle">▶</span>}</IconButton><input data-testid="preview-scrubber" type="range" min="0" max="100" value={progress} onChange={(event) => setProgress(event.target.value)} /><span className="timecode">00:{String(Math.round((progress / 100) * 11)).padStart(2, "0")} / 00:11</span><IconButton label="Preview settings"><Settings2 size={15} /></IconButton></div>
-  </section>;
-}
-
-function AgentTimeline({ statuses, outputs, onRerun }) {
-  const [expanded, setExpanded] = useState("Critic");
-  return <div className="timeline" data-testid="agent-timeline"><div className="section-heading"><div><span className="eyebrow">PIPELINE</span><h3>Agent timeline</h3></div><Pill tone="live"><Activity size={12} /> SEQUENTIAL</Pill></div>{AGENTS.map((agent, index) => { const status = statuses[agent] || "waiting"; return <div className={`agent-row ${status}`} key={agent} data-testid={`agent-row-${agent.toLowerCase()}`}><div className="agent-index">{status === "done" ? <Check size={14} /> : status === "running" ? <span className="spinner" /> : String(index + 1).padStart(2, "0")}</div><div className="agent-main"><button className="agent-name" data-testid={`agent-expand-${agent.toLowerCase()}`} onClick={() => setExpanded(expanded === agent ? "" : agent)}>{expanded === agent ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{agent}</button>{expanded === agent && <div className="agent-output" data-testid={`agent-output-${agent.toLowerCase()}`}>{outputs[agent] ? JSON.stringify(outputs[agent], null, 2) : "Waiting for a run…"}</div>}</div><div className="agent-meta">{status === "done" ? <span className="done-label">DONE</span> : status === "running" ? <span className="running-label">RUNNING</span> : <span>--:--</span>}<IconButton label={`Rerun ${agent}`} onClick={() => onRerun(agent)}><RefreshCw size={12} /></IconButton></div></div>; })}</div>;
-}
-
-function SceneEditor({ project, setProject, selected, setSelected }) {
-  const scene = project.scenes[selected] || project.scenes[0];
-  const update = (key, value) => setProject({ ...project, scenes: project.scenes.map((item, index) => index === selected ? { ...item, props: { ...item.props, [key]: value } } : item) });
-  const remove = () => { if (project.scenes.length < 2) return; setProject({ ...project, scenes: project.scenes.filter((_, index) => index !== selected) }); setSelected(Math.max(0, selected - 1)); };
-  return <aside className="right-panel" data-testid="scene-editor-panel"><div className="panel-heading"><div><span className="eyebrow">COMPOSITION</span><h3>Scenes <span className="count">{String(project.scenes.length).padStart(2, "0")}</span></h3></div><IconButton label="Scene menu"><MoreHorizontal size={17} /></IconButton></div><div className="scene-list" data-testid="scene-list">{project.scenes.map((item, index) => <button className={`scene-item ${selected === index ? "selected" : ""}`} key={`${item.template}-${index}`} data-testid={`scene-item-${index}`} onClick={() => setSelected(index)}><GripVertical size={14} className="grip" /><span className="scene-number">0{index + 1}</span><span className="scene-details"><b>{item.props.headline || item.template}</b><small>{item.template} · {item.durationSec.toFixed(1)}s</small></span><span className="scene-swatch" style={{ background: project.brand.primaryColor }} /></button>)}</div><div className="editor-form"><div className="editor-form-head"><span>SCENE {String(selected + 1).padStart(2, "0")}</span><IconButton label="Delete scene" onClick={remove}><Trash2 size={14} /></IconButton></div><label>Template<select data-testid="scene-template-select" value={scene?.template} onChange={(event) => setProject({ ...project, scenes: project.scenes.map((item, index) => index === selected ? { ...item, template: event.target.value } : item) })}>{TEMPLATES.map((template) => <option key={template}>{template}</option>)}</select></label><label>Headline<input data-testid="scene-headline-input" value={scene?.props?.headline || ""} onChange={(event) => update("headline", event.target.value)} /></label><label>Duration <span className="input-suffix">seconds</span><input data-testid="scene-duration-input" type="number" min="1" max="10" step="0.5" value={scene?.durationSec || 2} onChange={(event) => setProject({ ...project, scenes: project.scenes.map((item, index) => index === selected ? { ...item, durationSec: Number(event.target.value) } : item) })} /></label><button className="add-scene" data-testid="add-scene-button" onClick={() => setProject({ ...project, scenes: [...project.scenes, { template: "TextReveal", durationSec: 2, props: { headline: "New scene" } }] })}><Plus size={15} /> Add scene</button></div></aside>;
-}
-
-function ProjectsView({ onBack, onOpen }) {
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => { axios.get(`${API}/projects`).then(({ data }) => setProjects(data)).catch(() => setProjects([{ id: "seed-orbit", name: "Orbit launch film", updated_at: "Seed project", scene_json: seed, agent_outputs: {} }])).finally(() => setLoading(false)); }, []);
-  const duplicate = async (project) => { try { const { data } = await axios.post(`${API}/projects/${project.id}/duplicate`); setProjects((items) => [data, ...items]); } catch { setProjects((items) => [{ ...project, id: `${project.id}-copy`, name: `${project.name} copy` }, ...items]); } };
-  return <div className="projects-view"><button className="back-button" data-testid="projects-back-button" onClick={onBack}><ChevronRight size={16} /> Back to studio</button><div className="projects-heading"><div><span className="eyebrow">LOCAL LIBRARY</span><h1>Projects <span>{String(projects.length).padStart(2, "0")}</span></h1></div><button className="generate-button new-project-button" data-testid="new-project-button" onClick={onBack}><Plus size={16} /> New project</button></div><p className="projects-intro">Saved drafts stay on this machine, ready to reopen and keep shaping.</p><div className="projects-grid" data-testid="projects-list">{loading ? <div className="empty-projects">Loading local projects…</div> : projects.map((item) => <article className="project-card" key={item.id} data-testid={`project-card-${item.id}`}><div className="project-thumb"><span>{item.scene_json?.brand?.name || "LOCAL"}</span><b>{item.scene_json?.title || item.name}</b><i>✦</i></div><div className="project-card-meta"><div><b>{item.name}</b><small>{item.updated_at || "Saved locally"}</small></div><div className="project-card-actions"><IconButton label={`Open ${item.name}`} onClick={() => onOpen(item.scene_json || seed)}><MonitorPlay size={14} /></IconButton><IconButton label={`Duplicate ${item.name}`} onClick={() => duplicate(item)}><Copy size={14} /></IconButton></div></div></article>)}</div></div>;
+function OfflineBanner({ failure, onRetry, onDismiss }) {
+  const offline = failure.code === "ollama_offline";
+  return <div className="offline-banner" data-testid={offline ? "ollama-offline-banner" : "pipeline-error-banner"}>
+    <div className="offline-head"><TerminalSquare size={15} /><b>{offline ? "Ollama is offline" : "Pipeline stopped"}</b><button data-testid="dismiss-pipeline-error" aria-label="Dismiss" onClick={onDismiss}><X size={13} /></button></div>
+    <p data-testid="pipeline-error-message">{failure.message}</p>
+    {failure.fix && <code data-testid="ollama-fix-command">{failure.fix}</code>}
+    <button className="retry-button" data-testid="pipeline-retry-button" onClick={onRetry}>Check again & retry</button>
+  </div>;
 }
 
 function App() {
-  const [project, setProject] = useState(seed); const [selected, setSelected] = useState(0); const [statuses, setStatuses] = useState({}); const [outputs, setOutputs] = useState({}); const [prompt, setPrompt] = useState("Create a crisp launch film for a calm workspace where product teams turn ideas into momentum."); const [fastMode, setFastMode] = useState(false); const [playing, setPlaying] = useState(false); const [view, setView] = useState("studio"); const [ollama, setOllama] = useState({ running: false }); const [notice, setNotice] = useState("");
-  const totalDuration = useMemo(() => project.scenes.reduce((total, scene) => total + Number(scene.durationSec || 0), 0), [project]);
-  useEffect(() => { axios.get(`${API}/health/ollama`).then(({ data }) => setOllama(data)).catch(() => {}); }, []);
-  const generate = async () => { setNotice("Agents are drafting your film…"); setStatuses(Object.fromEntries(AGENTS.map((agent) => [agent, "waiting"]))); setOutputs({}); try { const response = await fetch(`${API}/pipeline/stream`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, aspect_ratio: project.aspectRatio, fast_mode: fastMode }) }); const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const chunks = buffer.split("\n\n"); buffer = chunks.pop(); chunks.forEach((chunk) => { const line = chunk.split("\n").find((item) => item.startsWith("data: ")); if (!line) return; const event = JSON.parse(line.slice(6)); if (event.type === "agent") { setStatuses((current) => ({ ...current, [event.name]: event.status })); if (event.output) setOutputs((current) => ({ ...current, [event.name]: event.output })); } if (event.type === "complete") { setProject(event.project); setNotice("Draft ready — edit any scene before export."); } }); } } catch { setNotice("Local API unavailable — seed project is still editable."); } };
-  const save = async () => { try { await axios.post(`${API}/projects`, { name: project.title, scene_json: project, agent_outputs: outputs }); setNotice("Project saved locally."); } catch { setNotice("Could not reach the local project database."); } };
-  if (view === "settings") return <div className="settings-view"><button className="back-button" data-testid="settings-back-button" onClick={() => setView("studio")}><ChevronRight size={16} /> Back to studio</button><span className="eyebrow">LOCAL CONFIGURATION</span><h1>Pipeline settings</h1><p>Keep every decision on this machine. Choose which agents run and which Ollama model they use.</p><div className="settings-card">{AGENTS.map((agent) => <div className="setting-row" key={agent}><div><b>{agent}</b><small>Sequential structured output</small></div><select data-testid={`model-select-${agent.toLowerCase()}`}><option>qwen2.5-coder:3b</option><option>llama3.2:3b</option></select><input type="checkbox" defaultChecked data-testid={`agent-toggle-${agent.toLowerCase()}`} /></div>)}<div className="health-box"><span className={ollama.running ? "health-dot good" : "health-dot"} /> <b>{ollama.running ? "Ollama is running" : "Ollama is offline"}</b><code>{ollama.fix || "ollama serve && ollama pull qwen2.5-coder:3b"}</code></div></div></div>;
-  if (view === "projects") return <ProjectsView onBack={() => setView("studio")} onOpen={(nextProject) => { setProject(nextProject); setSelected(0); setView("studio"); }} />;
-  return <div className="app-shell"><header className="topbar"><div className="brand-mark"><div className="brand-glyph">✦</div><div><b>FRAMEFORGE</b><span>LOCAL MOTION STUDIO</span></div></div><nav><button className={view === "studio" ? "nav-active" : ""} data-testid="nav-studio-button" onClick={() => setView("studio")}><Film size={15} /> Studio</button><button className={view === "projects" ? "nav-active" : ""} data-testid="nav-projects-button" onClick={() => setView("projects")}><FolderOpen size={15} /> Projects</button></nav><div className="top-actions"><span className="local-status"><span className={ollama.running ? "health-dot good" : "health-dot"} /> {ollama.running ? "OLLAMA ONLINE" : "LOCAL MODE"}</span><IconButton label="Help"><CircleHelp size={17} /></IconButton><IconButton label="Settings" onClick={() => setView("settings")}><Settings2 size={17} /></IconButton></div></header><main className="workspace"><aside className="left-panel"><div className="panel-heading"><div><span className="eyebrow">NEW PROJECT</span><h3>Build a film</h3></div><Pill>LOCAL</Pill></div><label className="prompt-label">Your brief<textarea data-testid="prompt-input" value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label><div className="control-row"><label>Aspect ratio<select data-testid="aspect-ratio-select" value={project.aspectRatio} onChange={(event) => setProject({ ...project, aspectRatio: event.target.value })}><option>16:9</option><option>9:16</option></select></label><label>Duration<div className="duration-display" data-testid="duration-display">{totalDuration.toFixed(1)}s <span>auto</span></div></label></div><div className="fast-row"><div><b>Fast mode</b><small>Merge lightweight agents</small></div><button className={`switch ${fastMode ? "on" : ""}`} data-testid="fast-mode-toggle" aria-label="Toggle fast mode" onClick={() => setFastMode(!fastMode)}><span /></button></div><button className="generate-button" data-testid="generate-button" onClick={generate}><Sparkles size={17} /> Generate motion draft <span>⌘ ↵</span></button><div className="local-note"><Gauge size={15} /><span><b>CPU-friendly pipeline</b><small>Agents run one at a time and keep Ollama warm.</small></span></div><AgentTimeline statuses={statuses} outputs={outputs} onRerun={(agent) => setNotice(`${agent} queued for a focused rerun.`)} /></aside><section className="center-panel"><div className="project-bar"><div><span className="eyebrow">UNTITLED PROJECT</span><h2 data-testid="project-title">{project.title}</h2></div><div className="project-actions"><IconButton label="Save project" onClick={save}><Save size={16} /></IconButton><button className="export-button" data-testid="export-button" onClick={() => setNotice("Render queued locally — FFmpeg will export an MP4 when configured.")}><Download size={15} /> Export MP4</button></div></div><Preview project={project} playing={playing} onToggle={() => setPlaying(!playing)} /><div className="below-preview"><div className="playback-strip"><button className="play-button" data-testid="play-preview-button" onClick={() => setPlaying(!playing)}>{playing ? "Ⅱ" : "▶"}</button><span className="play-label">{playing ? "Playing preview" : "Preview film"}</span><span className="muted">{project.aspectRatio} · {totalDuration.toFixed(1)} sec</span></div><div className="hint"><Layers3 size={14} /> Select a scene to edit its timing and copy</div></div>{notice && <div className="toast-notice" data-testid="notice-message">{notice}<button data-testid="dismiss-notice-button" onClick={() => setNotice("")}><X size={14} /></button></div>}</section><SceneEditor project={project} setProject={setProject} selected={selected} setSelected={setSelected} /></main></div>;
+  const [project, setProject] = useState(SEED_PROJECT);
+  const [selected, setSelected] = useState(0);
+  const [prompt, setPrompt] = useState("Create a crisp launch film for a calm workspace where product teams turn ideas into momentum.");
+  const [fastMode, setFastMode] = useState(false);
+  const [view, setView] = useState("studio");
+  const [ollama, setOllama] = useState({ running: false, models: [] });
+  const [settings, setSettingsState] = useState(loadSettings);
+  const [notice, setNotice] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const player = useRef(null);
+  const pipe = usePipeline({ settings, onProject: (next) => { setProject(next); setSelected(0); setNotice("Draft ready — edit, reorder or continue from any agent."); } });
+  const totalDuration = useMemo(() => project.scenes.reduce((t, s) => t + Number(s.durationSec || 0), 0), [project]);
+
+  const refreshHealth = () => axios.get(`${API}/health/ollama`).then(({ data }) => setOllama(data)).catch(() => {});
+  useEffect(() => { refreshHealth(); }, []);
+  useEffect(() => { const start = project.scenes.slice(0, selected).reduce((t, s) => t + sceneFrames(s), 0); player.current?.seekTo(start + 10); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setSettings = (next) => { setSettingsState(next); saveSettings(next); };
+  const generate = () => { setNotice(""); refreshHealth(); pipe.generate(prompt, project.aspectRatio, fastMode); };
+  const continueFrom = (agent, edited) => pipe.continueFrom(agent, edited, prompt, project.aspectRatio);
+  const rerun = (agent) => { const i = AGENTS.indexOf(agent); if (i === 0) generate(); else if (pipe.outputs[AGENTS[i - 1]] || i > 2) continueFrom(AGENTS[i - 1]); else setNotice(`Run the pipeline once before rerunning ${agent}.`); };
+  const save = async () => { try { await axios.post(`${API}/projects`, { name: project.title, scene_json: project, agent_outputs: { ...pipe.outputs, _prompt: prompt } }); setNotice("Project saved locally."); } catch { setNotice("Could not reach the local project database."); } };
+  const open = (item) => { setProject(item.scene_json || SEED_PROJECT); const { _prompt, ...outs } = item.agent_outputs || {}; pipe.setOutputs(outs); pipe.setStatuses(Object.fromEntries(Object.keys(outs).map((a) => [a, "done"]))); if (_prompt) setPrompt(_prompt); setSelected(0); setView("studio"); };
+
+  if (view === "settings") return <SettingsView settings={settings} setSettings={setSettings} ollama={ollama} onBack={() => setView("studio")} />;
+  if (view === "projects") return <ProjectsView onBack={() => setView("studio")} onOpen={open} />;
+  return <div className="app-shell">
+    <header className="topbar">
+      <div className="brand-mark"><div className="brand-glyph">✦</div><div><b>FRAMEFORGE</b><span>LOCAL MOTION STUDIO</span></div></div>
+      <nav><button className="nav-active" data-testid="nav-studio-button"><Film size={15} /> Studio</button><button data-testid="nav-projects-button" onClick={() => setView("projects")}><FolderOpen size={15} /> Projects</button></nav>
+      <div className="top-actions"><span className="local-status" data-testid="ollama-status"><span className={ollama.running ? "health-dot good" : "health-dot"} /> {ollama.running ? (ollama.model_pulled ? "OLLAMA ONLINE" : "MODEL NOT PULLED") : "OLLAMA OFFLINE"}</span><IconButton label="Help"><CircleHelp size={17} /></IconButton><IconButton label="Settings" onClick={() => setView("settings")}><Settings2 size={17} /></IconButton></div>
+    </header>
+    <main className="workspace">
+      <aside className="left-panel">
+        <div className="panel-heading"><div><span className="eyebrow">NEW PROJECT</span><h3>Build a film</h3></div><Pill>LOCAL</Pill></div>
+        <label className="prompt-label">Your brief<textarea data-testid="prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} /></label>
+        <div className="control-row"><label>Aspect ratio<select data-testid="aspect-ratio-select" value={project.aspectRatio} onChange={(e) => setProject({ ...project, aspectRatio: e.target.value })}><option>16:9</option><option>9:16</option></select></label><label>Duration<div className="duration-display" data-testid="duration-display">{totalDuration.toFixed(1)}s <span>auto</span></div></label></div>
+        <div className="fast-row"><div><b>Fast mode</b><small>Merge agents into 2 calls, skip Critic</small></div><Switch on={fastMode} onChange={setFastMode} label="Toggle fast mode" testId="fast-mode-toggle" /></div>
+        <button className="generate-button" data-testid="generate-button" disabled={pipe.busy} onClick={generate}><Sparkles size={17} /> {pipe.busy ? "Agents working…" : "Generate motion draft"} <span>⌘ ↵</span></button>
+        {pipe.failure && <OfflineBanner failure={pipe.failure} onRetry={generate} onDismiss={() => pipe.setFailure(null)} />}
+        <div className="local-note"><Gauge size={15} /><span><b>CPU-friendly pipeline</b><small>Agents run one at a time and keep Ollama warm.</small></span></div>
+        <AgentTimeline statuses={pipe.statuses} outputs={pipe.outputs} live={pipe.live} errors={pipe.errors} busy={pipe.busy} onRerun={rerun} onContinue={continueFrom} />
+      </aside>
+      <section className="center-panel">
+        <div className="project-bar"><div><span className="eyebrow">PROJECT</span><h2 data-testid="project-title">{project.title}</h2></div><div className="project-actions"><IconButton label="Save project" onClick={save}><Save size={16} /></IconButton><button className="export-button" data-testid="export-button" onClick={() => setExporting(true)}><Download size={15} /> Export MP4</button></div></div>
+        <Preview ref={player} project={project} />
+        <div className="below-preview"><div className="playback-strip"><button className="play-button" data-testid="play-preview-button" onClick={() => player.current?.toggle()}>▶</button><span className="play-label">Preview film</span><span className="muted">{project.aspectRatio} · {totalDuration.toFixed(1)} sec</span></div><div className="hint"><Layers3 size={14} /> Select a scene to jump the preview there</div></div>
+        {notice && <div className="toast-notice" data-testid="notice-message">{notice}<button data-testid="dismiss-notice-button" onClick={() => setNotice("")}><X size={14} /></button></div>}
+      </section>
+      <SceneEditor project={project} setProject={setProject} selected={selected} setSelected={setSelected} />
+    </main>
+    {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} />}
+  </div>;
 }
 
 export default App;
