@@ -17,9 +17,11 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
 
 from agents import ollama, pipeline  # noqa: E402
 from agents.definitions import AGENTS  # noqa: E402
+from agents.runs import RunStore  # noqa: E402
 from agents.schemas import SceneProject  # noqa: E402
 from render_jobs import RENDER_DIR, RenderJobs, capabilities  # noqa: E402
 import voice_setup  # noqa: E402
@@ -27,6 +29,7 @@ import voice_setup  # noqa: E402
 mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = mongo_client[os.environ["DB_NAME"]]
 jobs = RenderJobs(db)
+runs = RunStore()
 
 app = FastAPI(title="Frameforge Local Studio")
 api = APIRouter(prefix="/api")
@@ -117,15 +120,40 @@ async def pipeline_stream(request: GenerateRequest):
     return sse_response(pipeline.run(request.prompt, request.aspect_ratio, request.fast_mode, request.models, request.enabled))
 
 
-@api.post("/pipeline/continue")
-async def pipeline_continue(request: ContinueRequest):
+def continue_events(request: ContinueRequest):
     if request.from_agent not in AGENTS:
         raise HTTPException(400, f"Unknown agent {request.from_agent}")
     outputs = dict(request.outputs)
     errors = pipeline.validate_outputs(outputs, request.from_agent)
     if errors:
         raise HTTPException(422, {"message": "Edited output does not match the agent schema", "errors": errors})
-    return sse_response(pipeline.run(request.prompt, request.aspect_ratio, False, request.models, request.enabled, outputs, request.from_agent))
+    return pipeline.run(request.prompt, request.aspect_ratio, False, request.models, request.enabled, outputs, request.from_agent)
+
+
+@api.post("/pipeline/continue")
+async def pipeline_continue(request: ContinueRequest):
+    return sse_response(continue_events(request))
+
+
+class RunRequest(GenerateRequest):
+    from_agent: Optional[str] = None
+    outputs: Dict[str, Any] = {}
+
+
+@api.post("/pipeline/runs")
+async def pipeline_run_start(request: RunRequest):
+    if request.from_agent:
+        events = continue_events(ContinueRequest(**request.model_dump()))
+    else:
+        events = pipeline.run(request.prompt, request.aspect_ratio, request.fast_mode, request.models, request.enabled)
+    return {"run_id": runs.start(events)}
+
+
+@api.get("/pipeline/runs/{run_id}/events")
+async def pipeline_run_events(run_id: str, after: int = 0):
+    if run_id not in runs.runs:
+        raise HTTPException(404, "Run not found")
+    return StreamingResponse(runs.stream(run_id, after), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class VoiceSetupRequest(BaseModel):
@@ -153,9 +181,9 @@ async def voice_start(step: str, request: VoiceSetupRequest):
 async def voice_test(request: VoiceTestRequest):
     if not voice_setup.status()["piper"]:
         raise HTTPException(400, "Install Piper and download a voice first")
-    out = voice_setup.VOICE_DIR / "sample.wav"
+    out = voice_setup.VOICE_DIR / f"sample-{uuid.uuid4().hex}.wav"
     await asyncio.to_thread(voice_setup.synthesize, request.text, out)
-    return FileResponse(out, media_type="audio/wav", filename="sample.wav")
+    return FileResponse(out, media_type="audio/wav", filename="sample.wav", background=BackgroundTask(out.unlink, missing_ok=True))
 
 
 @api.get("/render/capabilities")

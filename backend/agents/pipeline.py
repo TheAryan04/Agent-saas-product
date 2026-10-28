@@ -24,18 +24,27 @@ def assemble(outputs: Dict[str, Any], aspect_ratio: str) -> Dict[str, Any]:
         motion = direct[i] if i < len(direct) else {"transition": "fade", "motion": "rise", "durationSec": planned["durationSec"]}
         props = {k: v for k, v in text.items() if v not in ("", [], None) and k != "detail"}
         key = DETAIL[planned["template"]][0]
-        if text.get("detail"):
-            props[key] = text["detail"][:LIMITS.get(key, 180)]
+        detail = text.get("detail", "")
+        if key == "label" and (not detail or "name.app" in detail or not detail.lower().startswith(orch["productName"].lower()[:3])):
+            detail = f"{orch['productName'].lower().replace(' ', '')}.app/overview"
+        if detail:
+            props[key] = detail[:LIMITS.get(key, 180)]
         props.update(transition=motion["transition"], motion=motion["motion"])
         scenes.append({"template": planned["template"], "durationSec": round(float(motion["durationSec"]), 1), "props": props})
     project = {"title": copy["title"], "aspectRatio": aspect_ratio, "brand": {"name": orch["productName"], **design}, "scenes": scenes}
     return SceneProject.model_validate(project).model_dump(exclude_none=True)
 
 
+TEMPLATE_FIELDS = {"TextReveal": {"eyebrow"}, "Flowchart": {"eyebrow"}, "CallToAction": {"button"}}
+
+
 def apply_fixes(project: Dict[str, Any], critic: Dict[str, Any]) -> Dict[str, Any]:
     for fix in critic.get("fixes", []):
-        if fix["sceneIndex"] < len(project["scenes"]) and len(fix["value"]) <= LIMITS.get(fix["field"], 70):
-            project["scenes"][fix["sceneIndex"]]["props"][fix["field"]] = fix["value"]
+        if fix["sceneIndex"] >= len(project["scenes"]) or len(fix["value"]) > LIMITS.get(fix["field"], 70):
+            continue
+        scene = project["scenes"][fix["sceneIndex"]]
+        if fix["field"] in {"headline", "subline"} | TEMPLATE_FIELDS.get(scene["template"], set()):
+            scene["props"][fix["field"]] = fix["value"]
     return project
 
 

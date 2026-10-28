@@ -1,0 +1,43 @@
+{
+  "summary": "Focused run of fast mode, contrast Critic, voice setup, voiceover+captions render, thumbnails, export dialog. Backend: 13/14 pytest pass. Voice setup API (GET status all steps true, select downloaded voice -> 'Already downloaded — selected', bogus step/choice -> 400, /voice/test -> audio/wav RIFF, empty text -> 422), capabilities piper/whisper true, captions-without-voiceover -> 400, voiceover+captions 2-scene render passed through all stages (Piper -> whisper.cpp -> bundling -> frames -> MP4 ready) and download returned video/mp4. Contrast: /pipeline/continue from Director with #007BFF/#FF5733/#343A40 -> Critic approved:false, issues ['Rejected colours: Highlighted headline word on background is 2.89:1...', 'Rejected colours: Eyebrow text ... 3.65:1'], contrast {passed:false, palette:{#0D82FF,#FF8166,#343A40}}, complete project.brand uses corrected palette (21.6s). FAST MODE FAILS THROUGH THE PREVIEW URL: the SSE stream is cut at exactly 60s by the preview ingress even though tokens stream continuously (Ollama log shows request aborted at 1m0s, twice). Same request against localhost:8001 completes correctly in 48.3s (Planner rules -> Orchestrator+Copywriter LLM -> Designer rules -> Director rules -> complete with 3 scenes, no Critic). In the UI: Planner RULES and Critic SKIP shown immediately, but at ~62s Orchestrator/Copywriter flip to ERROR with NO error message and project-title unchanged. Frontend otherwise: 4 scene thumbnails render Remotion stills, move-down/up reorder updates order + thumbnails, drag-drop works; Settings -> open-voice-setup-button -> 4 steps show Ready, Narration/Captions 'ready', Test voice yields audio element, Back returns to studio; Export dialog voiceover toggle enabled, captions disabled until voiceover on and reset when voiceover turned off; no setup links when installed. No page errors.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/pipeline/stream (fast_mode) via preview URL", "issue": "Stream is terminated at 60s by the preview ingress (hard cap, not idle - tokens were flowing). Fast-mode LLM step takes 48-70s, so fast mode (and any full 6-agent run, ~4 min) never completes for a user on the preview URL. Works on localhost (48s).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "apply_fixes (pipeline.py)", "issue": "Critic fixes are applied without checking the field belongs to the template: Critic added 'button':'Learn more' to a Flowchart scene, and also overwrote subline with hallucinated 'Transform your home'. Restrict fix fields to EXTRA_FIELD/template-relevant keys."},
+      {"endpoint": "POST /api/voice/test", "issue": "Writes to a single shared VOICE_DIR/sample.wav - concurrent requests can race/serve a partial file. Use a temp file per request."},
+      {"endpoint": "fast mode copy quality", "issue": "Copywriter output in fast mode repeats headline/subline across scenes and emitted placeholder 'name.app/dashboard' for DeviceMockup label."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Generate (any mode) when stream ends without complete/error event", "issue": "usePipeline.run/streamSSE treat a closed stream as success: agents get marked ERROR in finally but no failure banner/message is shown, so the user sees a silent failure. Set a failure like 'Connection to the local API closed before the pipeline finished' when no complete/error event was received.", "affected_selectors": ["[data-testid='pipeline-error-message']", "[data-testid='agent-status-orchestrator']"]}
+    ],
+    "design_issues": [
+      {"screen": "Scene list", "issues": ["Scene titles and template labels are truncated ('From idea to imp...', 'Flowchart ...') because thumbnail + arrows take most of the row; arrows are very low contrast."]},
+      {"screen": "Agent timeline (fast mode)", "issues": ["Running Orchestrator/Copywriter rows show 'Waiting for a run...' instead of live token text while the merged step streams."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_frameforge_contracts.py", "/app/test_reports/pytest/pytest_fast.xml", "/app/test_reports/pytest/pytest_voice_render.xml", "/app/tests/stream_probe.py", "/app/tests/fast_probe.py"],
+  "action_items": [
+    "HIGH: Make pipeline runs survive the 60s proxy cap: run the pipeline as a background job (store events in memory/Mongo keyed by run id) and have the frontend reconnect/poll (e.g. GET /api/pipeline/{run_id}/events?after=N), or at minimum make the SSE resumable. Per-step requests are not enough because the fast-mode LLM step alone is 48-70s.",
+    "Show an explicit pipeline error when the SSE stream closes without a 'complete' or 'error' event (usePipeline.js / streamSSE).",
+    "Validate Critic fix fields against the scene template in apply_fixes.",
+    "Use a per-request temp file in /api/voice/test.",
+    "Optional: exclude backend/tests from uvicorn --reload watch; editing test files restarts the backend and kills in-flight renders/streams."
+  ],
+  "critical_code_review_comments": [
+    "streamSSE has no completion check - a truncated stream is indistinguishable from success.",
+    "voice_setup.synthesize reloads the Piper model on every call (PiperVoice.load per scene) - cache the loaded voice for faster renders.",
+    "voice_setup.tasks is in-memory: after backend restart a running download's .part file is orphaned and UI loses progress (acceptable for MVP)."
+  ],
+  "updated_files": ["/app/backend/tests/test_frameforge_contracts.py", "/app/tests/stream_probe.py", "/app/tests/fast_probe.py"],
+  "success_rate": {"backend": "93% (13/14; fast mode fails only via preview ingress 60s cap)", "frontend": "90% (all flows pass except fast-mode generate completion via preview)"},
+  "seed_data_creation": "Render jobs in render_jobs collection; voice config reset to en_US-lessac-medium (en_US-amy-medium was downloaded at 20:48 by another actor, not by this test).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest serially: `pytest backend/tests/test_frameforge_contracts.py -n 0 -k ...` (never run LLM and render tests together). test_fast_mode_stream will fail via public URL until the 60s ingress cap is worked around; /app/tests/fast_probe.py [base_url] prints timestamped events (pass http://localhost:8001 to verify backend logic). stream_probe.py runs the contrast continue. Fast mode was run 4 times this iteration (2 public cut at 60s, 1 localhost 48s OK, 1 UI cut at 62s).",
+  "rca of the issue": "Fast mode via preview: Ollama log shows /api/chat ended at exactly 1m0s on every public-URL run while tokens were arriving every ~0.3s, and the localhost run finished in 48s -> the Kubernetes preview ingress enforces a ~60s max duration on the response; the client disconnect cancels the generator and the Ollama request. Frontend then marks running agents ERROR in finally{} without setting failure because neither 'error' nor 'complete' was received. Mitigation: background pipeline job + resumable event polling, and a 'stream closed early' failure message."
+}

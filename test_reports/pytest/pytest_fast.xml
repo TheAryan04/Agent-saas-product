@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="60.668" timestamp="2026-10-28T20:42:38.397472+00:00" hostname="agent-env-8805bbe1-a503-41da-9ca7-e1f86a9fffef"><testcase classname="tests.test_frameforge_contracts" name="test_fast_mode_stream" time="60.206"><failure message="AssertionError: assert ['Planner'] == ['Planner', '...', 'Director']&#10;  &#10;  Right contains 3 more items, first extra item: 'Orchestrator + Copywriter'&#10;  &#10;  Full diff:&#10;    [&#10;        'Planner',&#10;  -     'Orchestrator + Copywriter',...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">def test_fast_mode_stream():
+        t0 = time.time()
+        with requests.post(f"{BASE_URL}/api/pipeline/stream", json={"prompt": "A 10 second launch film for Nimbus, a calm note-taking app", "fast_mode": True}, stream=True, timeout=300) as r:
+            evs = events_of(r)
+        took = time.time() - t0
+        ag = [e for e in evs if e.get("type") == "agent"]
+        print("took", took, [(e["name"], e["status"], e.get("model"), e.get("mode"), e.get("elapsed")) for e in ag])
+        names = [e["name"] for e in ag if e["status"] == "done"]
+&gt;       assert names == ["Planner", "Orchestrator + Copywriter", "Designer", "Director"]
+E       AssertionError: assert ['Planner'] == ['Planner', '...', 'Director']
+E         
+E         Right contains 3 more items, first extra item: 'Orchestrator + Copywriter'
+E         
+E         Full diff:
+E           [
+E               'Planner',
+E         -     'Orchestrator + Copywriter',...
+E         
+E         ...Full output truncated (3 lines hidden), use '-vv' to show
+
+backend/tests/test_frameforge_contracts.py:183: AssertionError</failure></testcase></testsuite></testsuites>

@@ -64,9 +64,34 @@ async def stream_chat(model: str, messages: List[Dict[str, str]], schema: Dict[s
         raise OllamaOffline(str(exc)) from exc
 
 
+GRAMMAR_HEAVY = {"minLength", "maxLength"}
+
+
+def grammar_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """String length limits explode llama.cpp grammars on CPU; enforce them by clipping instead."""
+    if isinstance(schema, dict):
+        return {k: grammar_schema(v) for k, v in schema.items() if k not in GRAMMAR_HEAVY}
+    if isinstance(schema, list):
+        return [grammar_schema(v) for v in schema]
+    return schema
+
+
+def clip(value: Any, schema: Dict[str, Any]) -> Any:
+    if isinstance(value, str) and "maxLength" in schema:
+        return value[:schema["maxLength"]].strip()
+    if isinstance(value, list):
+        item_schema = schema.get("items", {})
+        return [clip(v, item_schema) for v in value[:schema.get("maxItems", len(value))]]
+    if isinstance(value, dict):
+        props = schema.get("properties", {})
+        return {k: clip(v, props.get(k, {})) for k, v in value.items()}
+    return value
+
+
 async def structured(model: str, system: str, user: str, out: Type[BaseModel], check=None) -> AsyncIterator[Dict[str, Any]]:
     """Yields token/retry events, finally {'result': validated_model}. One retry on validation failure."""
-    schema = inline_schema(out)
+    full_schema = inline_schema(out)
+    schema = grammar_schema(full_schema)
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     for attempt in range(2):
         text = ""
@@ -74,7 +99,7 @@ async def structured(model: str, system: str, user: str, out: Type[BaseModel], c
             text += token
             yield {"token": token}
         try:
-            result = out.model_validate(json.loads(text))
+            result = out.model_validate(clip(json.loads(text), full_schema))
             if check:
                 check(result)
             yield {"result": result}

@@ -13,7 +13,7 @@ SYSTEM = "You are {name}, one agent in a motion-graphics video pipeline for fict
 ROLES: Dict[str, str] = {
     "Orchestrator": "Read the brief and extract the product name (invent a short fictional one if missing), audience, tone, one key message, and a scene count of 3-6.",
     "Planner": f"Plan exactly sceneCount scenes. Each picks one template from {TEMPLATES}, a purpose and durationSec 1.5-6. Start with TextReveal, end with CallToAction, avoid repeating templates back to back.",
-    "Copywriter": "Write on-screen copy for every planned scene, same count and order. Headlines max 6 words, sublines max 12 words. 'detail' depends on the template (see SCENE NEEDS). Flowchart scenes must have 3 short steps; other scenes use an empty steps list. voiceover is one spoken sentence of max 15 words.",
+    "Copywriter": "Write on-screen copy for every planned scene, same count and order. Headlines max 6 words and every scene gets a different headline and subline (never repeat), sublines max 12 words. 'detail' depends on the template (see SCENE NEEDS). Flowchart scenes must have 3 short steps; other scenes use an empty steps list. voiceover is one spoken sentence of max 15 words.",
     "Designer": "Pick a brand palette as #RRGGBB hex: a vivid primaryColor, a contrasting accentColor, and a dark background. Pick a font from the allowed list.",
     "Director": "Direct motion for every scene, same count and order: a transition, a motion style and a final durationSec 1.5-6 that leaves time to read the copy.",
     "Critic": "Review the assembled scenes for clarity, length and consistency. approved=true if good. Suggest at most 4 small fixes, each targeting a sceneIndex and one field.",
@@ -37,7 +37,7 @@ DETAIL = {
     "Flowchart": ("eyebrow", "a 2-3 word uppercase eyebrow label"),
     "SocialMockup": ("post", "a social media post, max 25 words"),
     "SearchBar": ("query", "what a user types into the search bar, max 6 words"),
-    "DeviceMockup": ("label", "an app address like name.app/dashboard"),
+    "DeviceMockup": ("label", "the product's web address, lowercase product name + '.app/' + a page"),
     "CallToAction": ("button", "a button label, max 4 words"),
 }
 

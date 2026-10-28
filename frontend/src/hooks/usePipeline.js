@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AGENTS, OPTIONAL_AGENTS, streamSSE } from "../lib/api";
+import { AGENTS, OPTIONAL_AGENTS, runPipeline } from "../lib/api";
 
 export function usePipeline({ settings, onProject }) {
   const [statuses, setStatuses] = useState({});
@@ -26,22 +26,22 @@ export function usePipeline({ settings, onProject }) {
     if (event.type === "complete") { setOutputs(event.outputs); onProject(event.project); }
   };
 
-  const run = async (path, body, resetFrom) => {
+  const run = async (body, resetFrom) => {
     setBusy(true); setFailure(null);
     const reset = AGENTS.slice(resetFrom);
     const skip = (a) => (OPTIONAL_AGENTS.includes(a) && settings.enabled[a] === false) || (body.fast_mode && a === "Critic");
     setStatuses((s) => ({ ...s, ...Object.fromEntries(reset.map((a) => [a, skip(a) ? "skipped" : "waiting"])) }));
     setErrors((e) => Object.fromEntries(Object.entries(e).filter(([a]) => !reset.includes(a))));
-    try { await streamSSE(path, { ...body, models: settings.models, enabled: settings.enabled }, handle); }
+    try { await runPipeline({ ...body, models: settings.models, enabled: settings.enabled }, handle); }
     catch (err) { setFailure({ code: "request_failed", message: err.message }); }
     finally { setBusy(false); setStatuses((s) => Object.fromEntries(Object.entries(s).map(([a, v]) => [a, v === "running" || v === "retry" ? "error" : v]))); }
   };
 
-  const generate = (prompt, aspectRatio, fastMode) => { setOutputs({}); setLive({}); return run("/pipeline/stream", { prompt, aspect_ratio: aspectRatio, fast_mode: fastMode }, 0); };
+  const generate = (prompt, aspectRatio, fastMode) => { setOutputs({}); setLive({}); return run({ prompt, aspect_ratio: aspectRatio, fast_mode: fastMode }, 0); };
   const continueFrom = (agent, edited, prompt, aspectRatio) => {
     const merged = { ...outputs, ...(edited !== undefined ? { [agent]: edited } : {}) };
     setOutputs(merged);
-    return run("/pipeline/continue", { prompt, aspect_ratio: aspectRatio, from_agent: agent, outputs: merged }, AGENTS.indexOf(agent) + 1);
+    return run({ prompt, aspect_ratio: aspectRatio, from_agent: agent, outputs: merged }, AGENTS.indexOf(agent) + 1);
   };
 
   return { statuses, outputs, setOutputs, live, errors, busy, failure, setFailure, generate, continueFrom, setStatuses };
