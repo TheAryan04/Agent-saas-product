@@ -84,3 +84,9 @@ android-sdk/
 # overlay black-box crash/user-report dumps — session data, never history
 **/.emergent/recordings/
 frontend/node_modules/.cache/webpack/remotion-production-4.0.539/dce8be041f2357e2f08943908256b6da/0.pack
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
