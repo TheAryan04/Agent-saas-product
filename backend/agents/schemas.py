@@ -38,6 +38,17 @@ class CopywriterOut(BaseModel):
     scenes: List[CopyScene] = Field(min_length=2, max_length=6)
 
 
+class FastCopyScene(BaseModel):
+    headline: str = Field(min_length=1, max_length=70)
+    subline: str = Field(max_length=140)
+    detail: str = Field(max_length=180)
+
+
+class FastCopywriterOut(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    scenes: List[FastCopyScene] = Field(min_length=3, max_length=3)
+
+
 class DesignerOut(BaseModel):
     primaryColor: str = Hex
     accentColor: str = Hex
@@ -66,6 +77,11 @@ class CriticOut(BaseModel):
     approved: bool
     issues: List[str] = Field(default_factory=list, max_length=6)
     fixes: List[CriticFix] = Field(default_factory=list, max_length=6)
+
+
+class CriticResult(CriticOut):
+    issues: List[str] = Field(default_factory=list, max_length=12)
+    contrast: Optional[Dict[str, Any]] = None
 
 
 class Scene(BaseModel):

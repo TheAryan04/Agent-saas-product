@@ -13,6 +13,7 @@ import { SceneEditor } from "./components/studio/SceneEditor";
 import { ExportDialog } from "./components/studio/ExportDialog";
 import { ProjectsView } from "./components/studio/ProjectsView";
 import { SettingsView } from "./components/studio/SettingsView";
+import { VoiceSetupView } from "./components/studio/VoiceSetupView";
 
 function OfflineBanner({ failure, onRetry, onDismiss }) {
   const offline = failure.code === "ollama_offline";
@@ -49,7 +50,8 @@ function App() {
   const save = async () => { try { await axios.post(`${API}/projects`, { name: project.title, scene_json: project, agent_outputs: { ...pipe.outputs, _prompt: prompt } }); setNotice("Project saved locally."); } catch { setNotice("Could not reach the local project database."); } };
   const open = (item) => { setProject(item.scene_json || SEED_PROJECT); const { _prompt, ...outs } = item.agent_outputs || {}; pipe.setOutputs(outs); pipe.setStatuses(Object.fromEntries(Object.keys(outs).map((a) => [a, "done"]))); if (_prompt) setPrompt(_prompt); setSelected(0); setView("studio"); };
 
-  if (view === "settings") return <SettingsView settings={settings} setSettings={setSettings} ollama={ollama} onBack={() => setView("studio")} />;
+  if (view === "voice") return <VoiceSetupView onBack={() => setView("studio")} />;
+  if (view === "settings") return <SettingsView settings={settings} setSettings={setSettings} ollama={ollama} onBack={() => setView("studio")} onVoiceSetup={() => setView("voice")} />;
   if (view === "projects") return <ProjectsView onBack={() => setView("studio")} onOpen={open} />;
   return <div className="app-shell">
     <header className="topbar">
@@ -62,7 +64,7 @@ function App() {
         <div className="panel-heading"><div><span className="eyebrow">NEW PROJECT</span><h3>Build a film</h3></div><Pill>LOCAL</Pill></div>
         <label className="prompt-label">Your brief<textarea data-testid="prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} /></label>
         <div className="control-row"><label>Aspect ratio<select data-testid="aspect-ratio-select" value={project.aspectRatio} onChange={(e) => setProject({ ...project, aspectRatio: e.target.value })}><option>16:9</option><option>9:16</option></select></label><label>Duration<div className="duration-display" data-testid="duration-display">{totalDuration.toFixed(1)}s <span>auto</span></div></label></div>
-        <div className="fast-row"><div><b>Fast mode</b><small>Merge agents into 2 calls, skip Critic</small></div><Switch on={fastMode} onChange={setFastMode} label="Toggle fast mode" testId="fast-mode-toggle" /></div>
+        <div className="fast-row"><div><b>Fast mode</b><small>1 AI call + instant rules, skips Critic</small></div><Switch on={fastMode} onChange={setFastMode} label="Toggle fast mode" testId="fast-mode-toggle" /></div>
         <button className="generate-button" data-testid="generate-button" disabled={pipe.busy} onClick={generate}><Sparkles size={17} /> {pipe.busy ? "Agents working…" : "Generate motion draft"} <span>⌘ ↵</span></button>
         {pipe.failure && <OfflineBanner failure={pipe.failure} onRetry={generate} onDismiss={() => pipe.setFailure(null)} />}
         <div className="local-note"><Gauge size={15} /><span><b>CPU-friendly pipeline</b><small>Agents run one at a time and keep Ollama warm.</small></span></div>
@@ -76,7 +78,7 @@ function App() {
       </section>
       <SceneEditor project={project} setProject={setProject} selected={selected} setSelected={setSelected} />
     </main>
-    {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} />}
+    {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} onSetup={() => { setExporting(false); setView("voice"); }} />}
   </div>;
 }
 

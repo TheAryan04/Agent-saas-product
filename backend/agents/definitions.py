@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, Optional, Type
 
 from pydantic import BaseModel
 
-from .schemas import CopywriterOut, CriticOut, DesignerOut, DirectorOut, OrchestratorOut, PlannerOut, TEMPLATES
+from .schemas import CopywriterOut, CriticOut, CriticResult, DesignerOut, DirectorOut, FastCopywriterOut, OrchestratorOut, PlannerOut, TEMPLATES
 
 AGENTS = ["Orchestrator", "Planner", "Copywriter", "Designer", "Director", "Critic"]
 OPTIONAL_AGENTS = {"Designer", "Director", "Critic"}
@@ -21,8 +21,10 @@ ROLES: Dict[str, str] = {
 
 SCHEMAS: Dict[str, Type[BaseModel]] = {
     "Orchestrator": OrchestratorOut, "Planner": PlannerOut, "Copywriter": CopywriterOut,
-    "Designer": DesignerOut, "Director": DirectorOut, "Critic": CriticOut,
+    "Designer": DesignerOut, "Director": DirectorOut, "Critic": CriticResult,
 }
+LLM_SCHEMAS: Dict[str, Type[BaseModel]] = {**SCHEMAS, "Critic": CriticOut}
+FAST_LLM_SCHEMAS: Dict[str, Type[BaseModel]] = {**LLM_SCHEMAS, "Copywriter": FastCopywriterOut}
 
 CONTEXT_KEYS = {
     "Orchestrator": [], "Planner": ["Orchestrator"], "Copywriter": ["Orchestrator", "Planner"],
@@ -54,7 +56,7 @@ def scene_count_check(outputs: Dict[str, Any], step) -> Optional[Callable[[Any],
                 raise ValueError(f"{agent}.scenes must have exactly {expected} items, one per planned scene")
             if agent == "Copywriter":
                 for i, (planned, scene) in enumerate(zip(plan, part.scenes)):
-                    if planned["template"] == "Flowchart" and len(scene.steps) < 2:
+                    if planned["template"] == "Flowchart" and len(getattr(scene, "steps", [])) < 2:
                         raise ValueError(f"scenes[{i}] is a Flowchart and needs 3 short steps")
     return check
 
@@ -64,14 +66,15 @@ def scene_needs(outputs: Dict[str, Any]) -> str:
     return "\n".join(f"scene {i + 1} ({s['template']}): detail = {DETAIL[s['template']][1]}" + ("; steps = 3 short step names" if s["template"] == "Flowchart" else "") for i, s in enumerate(plan))
 
 
-def user_prompt(agent: str, brief: str, outputs: Dict[str, Any], draft: Optional[Dict[str, Any]] = None) -> str:
+def user_prompt(step, brief: str, outputs: Dict[str, Any], draft: Optional[Dict[str, Any]] = None) -> str:
     parts = [f"BRIEF:\n{brief}"]
-    for key in CONTEXT_KEYS[agent]:
+    keys = [k for agent in step for k in CONTEXT_KEYS[agent] if k not in step]
+    for key in dict.fromkeys(keys):
         if key in outputs:
             parts.append(f"{key.upper()} OUTPUT:\n{json.dumps(outputs[key])}")
-    if agent == "Copywriter":
+    if "Copywriter" in step:
         parts.append(f"SCENE NEEDS:\n{scene_needs(outputs)}")
-    if agent == "Critic" and draft:
+    if "Critic" in step and draft:
         slim = [{"i": i, "template": s["template"], **{k: s["props"].get(k, "") for k in ("headline", "subline", "eyebrow", "button")}} for i, s in enumerate(draft["scenes"])]
         parts.append(f"ASSEMBLED SCENES:\n{json.dumps(slim)}")
     return "\n\n".join(parts)

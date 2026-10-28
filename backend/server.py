@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from agents import ollama, pipeline  # noqa: E402
 from agents.definitions import AGENTS  # noqa: E402
 from agents.schemas import SceneProject  # noqa: E402
 from render_jobs import RENDER_DIR, RenderJobs, capabilities  # noqa: E402
+import voice_setup  # noqa: E402
 
 mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = mongo_client[os.environ["DB_NAME"]]
@@ -124,6 +126,36 @@ async def pipeline_continue(request: ContinueRequest):
     if errors:
         raise HTTPException(422, {"message": "Edited output does not match the agent schema", "errors": errors})
     return sse_response(pipeline.run(request.prompt, request.aspect_ratio, False, request.models, request.enabled, outputs, request.from_agent))
+
+
+class VoiceSetupRequest(BaseModel):
+    choice: str = ""
+
+
+class VoiceTestRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=200)
+
+
+@api.get("/voice/setup")
+async def voice_status():
+    return voice_setup.status()
+
+
+@api.post("/voice/setup/{step}")
+async def voice_start(step: str, request: VoiceSetupRequest):
+    try:
+        return voice_setup.start(step, request.choice)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@api.post("/voice/test")
+async def voice_test(request: VoiceTestRequest):
+    if not voice_setup.status()["piper"]:
+        raise HTTPException(400, "Install Piper and download a voice first")
+    out = voice_setup.VOICE_DIR / "sample.wav"
+    await asyncio.to_thread(voice_setup.synthesize, request.text, out)
+    return FileResponse(out, media_type="audio/wav", filename="sample.wav")
 
 
 @api.get("/render/capabilities")

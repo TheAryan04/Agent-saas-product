@@ -32,7 +32,7 @@ export function AgentTimeline({ statuses, outputs, live, errors, busy, onRerun, 
           {open && <AgentOutput agent={agent} output={outputs[agent]} live={live[agent]} busy={busy} onContinue={onContinue} />}
         </div>
         <div className="agent-meta">
-          <span className={`${status}-label`} data-testid={`agent-status-${agent.toLowerCase()}`}>{status === "waiting" ? "--:--" : status === "skipped" ? "SKIP" : status.toUpperCase()}</span>
+          <span className={live[agent] === "rules" && status === "done" ? "rules-label" : `${status}-label`} data-testid={`agent-status-${agent.toLowerCase()}`}>{status === "waiting" ? "--:--" : status === "skipped" ? "SKIP" : live[agent] === "rules" && status === "done" ? "RULES" : status.toUpperCase()}</span>
           <IconButton label={`Rerun ${agent}`} disabled={busy} onClick={() => onRerun(agent)}><RefreshCw size={12} /></IconButton>
         </div>
       </div>;

@@ -16,6 +16,7 @@ export function usePipeline({ settings, onProject }) {
       if (event.status === "running") setLive((l) => ({ ...l, ...Object.fromEntries(agents.map((a) => [a, ""])) }));
       if (event.status === "retry" || event.status === "error") setErrors((e) => ({ ...e, ...Object.fromEntries(agents.map((a) => [a, event.status === "retry" ? `Retrying — ${event.error.slice(0, 140)}` : event.error])) }));
       if (event.status === "done") {
+        if (event.mode === "rules") setLive((l) => ({ ...l, ...Object.fromEntries(agents.map((a) => [a, "rules"])) }));
         setErrors((e) => { const next = { ...e }; agents.forEach((a) => delete next[a]); return next; });
         setOutputs((o) => ({ ...o, ...(agents.length > 1 ? event.output : { [agents[0]]: event.output }) }));
       }
@@ -28,7 +29,8 @@ export function usePipeline({ settings, onProject }) {
   const run = async (path, body, resetFrom) => {
     setBusy(true); setFailure(null);
     const reset = AGENTS.slice(resetFrom);
-    setStatuses((s) => ({ ...s, ...Object.fromEntries(reset.map((a) => [a, OPTIONAL_AGENTS.includes(a) && settings.enabled[a] === false ? "skipped" : "waiting"])) }));
+    const skip = (a) => (OPTIONAL_AGENTS.includes(a) && settings.enabled[a] === false) || (body.fast_mode && a === "Critic");
+    setStatuses((s) => ({ ...s, ...Object.fromEntries(reset.map((a) => [a, skip(a) ? "skipped" : "waiting"])) }));
     setErrors((e) => Object.fromEntries(Object.entries(e).filter(([a]) => !reset.includes(a))));
     try { await streamSSE(path, { ...body, models: settings.models, enabled: settings.enabled }, handle); }
     catch (err) { setFailure({ code: "request_failed", message: err.message }); }

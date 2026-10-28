@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { Thumbnail } from "@remotion/player";
 import { ArrowDown, ArrowUp, GripVertical, Plus, Trash2 } from "lucide-react";
 import { TEMPLATES } from "../../lib/api";
+import { Film, filmMeta, sceneFrames } from "../../remotion/Film";
 import { IconButton } from "./Controls";
 
 const EXTRA_FIELD = { CallToAction: ["button", "Button label"], SearchBar: ["query", "Search query"], SocialMockup: ["post", "Post text"], DeviceMockup: ["label", "Window address"], TextReveal: ["eyebrow", "Eyebrow"] };
@@ -12,16 +14,19 @@ export function move(list, from, to) {
   return next;
 }
 
-function SceneRow({ item, index, total, selected, brand, dragOver, onSelect, onMove, drag }) {
+function SceneRow({ item, index, total, selected, project, startFrame, dragOver, onSelect, onMove, drag }) {
+  const meta = filmMeta(project);
+  const frame = Math.min(startFrame + sceneFrames(item) - 1, startFrame + 45);
   return <div className={`scene-item ${selected ? "selected" : ""} ${dragOver ? "drag-over" : ""}`} data-testid={`scene-item-${index}`} draggable onClick={onSelect} {...drag}>
     <GripVertical size={14} className="grip" data-testid={`scene-drag-handle-${index}`} />
-    <span className="scene-number">{String(index + 1).padStart(2, "0")}</span>
-    <span className="scene-details"><b>{item.props?.headline || item.template}</b><small>{item.template} · {Number(item.durationSec).toFixed(1)}s</small></span>
+    <span className={`scene-thumb ${meta.height > meta.width ? "vertical" : ""}`} data-testid={`scene-thumbnail-${index}`}>
+      <Thumbnail component={Film} inputProps={{ project }} compositionWidth={meta.width} compositionHeight={meta.height} durationInFrames={meta.durationInFrames} fps={meta.fps} frameToDisplay={frame} style={{ width: "100%", display: "block" }} acknowledgeRemotionLicense />
+    </span>
+    <span className="scene-details"><b>{item.props?.headline || item.template}</b><small>{String(index + 1).padStart(2, "0")} · {item.template} · {Number(item.durationSec).toFixed(1)}s</small></span>
     <span className="scene-arrows" onClick={(e) => e.stopPropagation()}>
       <IconButton label={`Move scene ${index + 1} up`} testId={`scene-move-up-${index}`} disabled={index === 0} onClick={() => onMove(index, index - 1)}><ArrowUp size={11} /></IconButton>
       <IconButton label={`Move scene ${index + 1} down`} testId={`scene-move-down-${index}`} disabled={index === total - 1} onClick={() => onMove(index, index + 1)}><ArrowDown size={11} /></IconButton>
     </span>
-    <span className="scene-swatch" style={{ background: brand.primaryColor }} />
   </div>;
 }
 
@@ -63,7 +68,7 @@ export function SceneEditor({ project, setProject, selected, setSelected }) {
   return <aside className="right-panel" data-testid="scene-editor-panel">
     <div className="panel-heading"><div><span className="eyebrow">COMPOSITION</span><h3>Scenes <span className="count" data-testid="scene-count">{String(scenes.length).padStart(2, "0")}</span></h3></div></div>
     <p className="drag-hint">Drag to reorder, or use the arrows.</p>
-    <div className="scene-list" data-testid="scene-list">{scenes.map((item, index) => <SceneRow key={`${index}-${item.template}`} item={item} index={index} total={scenes.length} selected={selected === index} brand={project.brand} dragOver={dragOver === index && dragFrom !== index} onSelect={() => setSelected(index)} onMove={reorder} drag={dragProps(index)} />)}</div>
+    <div className="scene-list" data-testid="scene-list">{scenes.map((item, index) => <SceneRow key={`${index}-${item.template}`} item={item} index={index} total={scenes.length} selected={selected === index} project={project} startFrame={scenes.slice(0, index).reduce((t, s) => t + sceneFrames(s), 0)} dragOver={dragOver === index && dragFrom !== index} onSelect={() => setSelected(index)} onMove={reorder} drag={dragProps(index)} />)}</div>
     <div>
       {scene && <SceneForm scene={scene} index={selected} onChange={update} onDelete={remove} canDelete={scenes.length > 1} />}
       <button className="add-scene" data-testid="add-scene-button" onClick={add}><Plus size={15} /> Add scene</button>

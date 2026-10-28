@@ -4,14 +4,14 @@ import { Download, Film, Loader2, Square, X } from "lucide-react";
 import { API } from "../../lib/api";
 import { Switch } from "./Controls";
 
-function OptionRow({ title, hint, on, onChange, available, fix, testId }) {
+function OptionRow({ title, hint, on, onChange, available, installed, onSetup, testId }) {
   return <div className="export-option" data-testid={`${testId}-row`}>
-    <div><b>{title}</b><small>{available ? hint : <span data-testid={`${testId}-unavailable`}>Not installed — {fix}</span>}</small></div>
+    <div><b>{title}</b><small>{installed ? hint : <span data-testid={`${testId}-unavailable`}>Not installed — <button className="export-setup-link" data-testid={`${testId}-setup-link`} onClick={onSetup}>open Voice setup</button></span>}</small></div>
     <Switch on={on} onChange={onChange} label={title} testId={`${testId}-toggle`} disabled={!available} />
   </div>;
 }
 
-export function ExportDialog({ project, onClose }) {
+export function ExportDialog({ project, onClose, onSetup }) {
   const [caps, setCaps] = useState(null);
   const [voiceover, setVoiceover] = useState(false);
   const [captions, setCaptions] = useState(false);
@@ -33,8 +33,8 @@ export function ExportDialog({ project, onClose }) {
       <div className="panel-heading"><div><span className="eyebrow">LOCAL RENDER</span><h3>Export MP4</h3></div><button className="modal-close" data-testid="export-close-button" aria-label="Close" onClick={onClose}><X size={16} /></button></div>
       <p className="modal-copy">Remotion renders the exact preview composition on this machine, then encodes H.264 with FFmpeg. Expect roughly 5–10× real time on a laptop CPU.</p>
       {!caps ? <div className="modal-copy" data-testid="export-capabilities-loading">Checking local tools…</div> : <>
-        <OptionRow title="Voiceover" hint="Piper reads each scene's voiceover line. Scenes stretch to fit the audio." on={voiceover} onChange={setVoiceover} available={caps.piper} fix={caps.piper_fix} testId="export-voiceover" />
-        <OptionRow title="Captions" hint={voiceover ? "whisper.cpp transcribes the voiceover into burned-in captions." : "Turn on voiceover first."} on={captions && voiceover} onChange={setCaptions} available={caps.whisper && voiceover} fix={caps.whisper ? "turn on voiceover first" : caps.whisper_fix} testId="export-captions" />
+        <OptionRow title="Voiceover" hint="Piper reads each scene's voiceover line. Scenes stretch to fit the audio." on={voiceover} onChange={setVoiceover} available={caps.piper} installed={caps.piper} onSetup={onSetup} testId="export-voiceover" />
+        <OptionRow title="Captions" hint={voiceover ? "whisper.cpp transcribes the voiceover into burned-in captions." : "Turn on voiceover first."} on={captions && voiceover} onChange={setCaptions} available={caps.whisper && voiceover} installed={caps.whisper} onSetup={onSetup} testId="export-captions" />
         {!caps.remotion && <div className="agent-error" data-testid="export-remotion-missing">Remotion renderer not found. Run yarn install in frontend/.</div>}
       </>}
       {job && <div className="render-progress" data-testid="render-progress">

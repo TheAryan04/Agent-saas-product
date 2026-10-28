@@ -3,13 +3,14 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from pydantic import create_model
 
-from . import ollama
-from .definitions import AGENTS, DETAIL, OPTIONAL_AGENTS, SCHEMAS, scene_count_check, system_prompt, user_prompt
+from . import contrast, ollama
+from .definitions import AGENTS, DETAIL, FAST_LLM_SCHEMAS, LLM_SCHEMAS, OPTIONAL_AGENTS, SCHEMAS, scene_count_check, system_prompt, user_prompt
+from .rules import RULE_AGENTS
 from .schemas import SceneProject
 
 LIMITS = {"eyebrow": 32, "button": 32, "query": 60, "label": 48, "post": 180, "headline": 70, "subline": 140}
 
-FAST_STEPS = [["Orchestrator", "Planner"], ["Copywriter", "Designer", "Director"]]
+FAST_STEPS = [["Planner"], ["Orchestrator", "Copywriter"], ["Designer"], ["Director"]]
 DEFAULT_DESIGN = {"primaryColor": "#7CFFCB", "accentColor": "#55D6FF", "background": "#0B1016", "font": "Outfit"}
 
 
@@ -42,6 +43,38 @@ def evt(**kwargs) -> Dict[str, Any]:
     return kwargs
 
 
+def rule_step(agent: str, outputs: Dict[str, Any]) -> Dict[str, Any]:
+    return SCHEMAS[agent].model_validate(RULE_AGENTS[agent](outputs)).model_dump()
+
+
+def critic_contrast(result: Dict[str, Any], draft: Dict[str, Any]) -> Dict[str, Any]:
+    issues, fixed = contrast.audit(draft["brand"])
+    result["contrast"] = {"passed": not issues, "palette": fixed}
+    if issues:
+        result["approved"] = False
+        result["issues"] = (issues + result.get("issues", []))[:12]
+    return result
+
+
+def finalize(outputs: Dict[str, Any], aspect_ratio: str) -> Dict[str, Any]:
+    project = assemble(outputs, aspect_ratio)
+    if outputs.get("Critic"):
+        project = apply_fixes(project, outputs["Critic"])
+    issues, fixed = contrast.audit(project["brand"])
+    if issues:
+        project["brand"].update(fixed)
+    return project
+
+
+def plan_steps(fast_mode: bool, start_after: Optional[str], enabled: Dict[str, bool]) -> List[List[str]]:
+    if start_after:
+        steps = [[a] for a in AGENTS[AGENTS.index(start_after) + 1:]]
+    else:
+        steps = FAST_STEPS if fast_mode else [[a] for a in AGENTS]
+    steps = [[a for a in step if enabled.get(a, True) or a not in OPTIONAL_AGENTS] for step in steps]
+    return [step for step in steps if step]
+
+
 async def run(brief: str, aspect_ratio: str, fast_mode: bool = False, models: Optional[Dict[str, str]] = None,
               enabled: Optional[Dict[str, bool]] = None, outputs: Optional[Dict[str, Any]] = None,
               start_after: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
@@ -51,39 +84,33 @@ async def run(brief: str, aspect_ratio: str, fast_mode: bool = False, models: Op
         yield evt(type="error", code="ollama_offline", message="Ollama is offline. Start it on this machine, then generate again.", fix=status["fix"])
         return
 
-    if start_after:
-        remaining = AGENTS[AGENTS.index(start_after) + 1:]
-        steps = [[a] for a in remaining]
-    else:
-        steps = FAST_STEPS if fast_mode else [[a] for a in AGENTS]
-    steps = [[a for a in step if enabled.get(a, True) or a not in OPTIONAL_AGENTS] for step in steps]
-    steps = [step for step in steps if step]
+    fast = fast_mode and not start_after
+    steps = plan_steps(fast_mode, start_after, enabled)
     for agent in [a for step in steps for a in step]:
         outputs.pop(agent, None)
+    llm_schemas = FAST_LLM_SCHEMAS if fast else LLM_SCHEMAS
 
     started = time.perf_counter()
     for index, step in enumerate(steps):
         name = " + ".join(step)
+        if fast and step[0] in RULE_AGENTS:
+            yield evt(type="agent", name=name, agents=step, status="running", index=index, model="rules")
+            outputs[step[0]] = rule_step(step[0], outputs)
+            yield evt(type="agent", name=name, agents=step, status="done", mode="rules", elapsed=round(time.perf_counter() - started, 2), output=outputs[step[0]])
+            continue
         model = models.get(step[0]) or ollama.DEFAULT_MODEL
         yield evt(type="agent", name=name, agents=step, status="running", index=index, model=model)
         draft = assemble(outputs, aspect_ratio) if "Critic" in step else None
-        if len(step) == 1:
-            out_model = SCHEMAS[step[0]]
-        else:
-            out_model = create_model("Merged", **{a: (SCHEMAS[a], ...) for a in step})
-        check = scene_count_check(outputs, step)
+        out_model = llm_schemas[step[0]] if len(step) == 1 else create_model("Merged", **{a: (llm_schemas[a], ...) for a in step})
         try:
-            async for item in ollama.structured(model, system_prompt(step), user_prompt(step[0], brief, outputs, draft), out_model, check):
+            async for item in ollama.structured(model, system_prompt(step), user_prompt(step, brief, outputs, draft), out_model, scene_count_check(outputs, step)):
                 if "token" in item:
                     yield evt(type="token", name=name, text=item["token"])
                 elif "retry" in item:
                     yield evt(type="agent", name=name, agents=step, status="retry", error=item["retry"])
                 else:
                     result = item["result"].model_dump()
-                    if len(step) == 1:
-                        outputs[step[0]] = result
-                    else:
-                        outputs.update(result)
+                    outputs.update({step[0]: result} if len(step) == 1 else result)
         except ollama.OllamaOffline:
             yield evt(type="error", code="ollama_offline", message="Lost connection to Ollama.", fix=status["fix"])
             return
@@ -91,16 +118,19 @@ async def run(brief: str, aspect_ratio: str, fast_mode: bool = False, models: Op
             yield evt(type="agent", name=name, agents=step, status="error", error=str(exc))
             yield evt(type="error", code="agent_failed", agent=name, message=str(exc))
             return
+        if fast and "Copywriter" in step:
+            outputs["Copywriter"]["scenes"] = [{**s, "steps": [], "voiceover": ""} for s in outputs["Copywriter"]["scenes"]]
+            outputs["Orchestrator"]["sceneCount"] = len(outputs["Planner"]["scenes"])
+        if "Critic" in step:
+            outputs["Critic"] = critic_contrast(outputs["Critic"], draft)
         yield evt(type="agent", name=name, agents=step, status="done", elapsed=round(time.perf_counter() - started, 2),
                   output={a: outputs[a] for a in step} if len(step) > 1 else outputs[step[0]])
 
     try:
-        project = assemble(outputs, aspect_ratio)
+        project = finalize(outputs, aspect_ratio)
     except Exception as exc:
         yield evt(type="error", code="assemble_failed", message=f"Could not assemble scenes: {exc}")
         return
-    if outputs.get("Critic"):
-        project = apply_fixes(project, outputs["Critic"])
     yield evt(type="complete", project=project, outputs=outputs)
 
 

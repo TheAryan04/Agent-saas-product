@@ -3,7 +3,7 @@ import axios from "axios";
 import { ChevronRight } from "lucide-react";
 import { AGENTS, API, MODELS, OPTIONAL_AGENTS } from "../../lib/api";
 
-export function SettingsView({ settings, setSettings, ollama, onBack }) {
+export function SettingsView({ settings, setSettings, ollama, onBack, onVoiceSetup }) {
   const [caps, setCaps] = useState(null);
   useEffect(() => { axios.get(`${API}/render/capabilities`).then(({ data }) => setCaps(data)).catch(() => {}); }, []);
   const models = [...new Set([...(ollama.models || []), ...MODELS])];
@@ -20,7 +20,7 @@ export function SettingsView({ settings, setSettings, ollama, onBack }) {
         <input type="checkbox" data-testid={`agent-toggle-${agent.toLowerCase()}`} checked={settings.enabled[agent] !== false || !OPTIONAL_AGENTS.includes(agent)} disabled={!OPTIONAL_AGENTS.includes(agent)} onChange={(e) => setEnabled(agent, e.target.checked)} />
       </div>)}
       <div className="health-box" data-testid="settings-ollama-health"><span className={ollama.running ? "health-dot good" : "health-dot"} /> <b>{ollama.running ? (ollama.model_pulled ? "Ollama is running" : "Ollama running, model not pulled") : "Ollama is offline"}</b><code>{ollama.fix}</code></div>
-      <div className="health-box" data-testid="settings-voice-health"><span className={caps?.piper ? "health-dot good" : "health-dot"} /> <b>Piper voiceover {caps?.piper ? "ready" : "not installed"}</b><span className={caps?.whisper ? "health-dot good" : "health-dot"} style={{ marginLeft: 14 }} /> <b>whisper.cpp captions {caps?.whisper ? "ready" : "not installed"}</b></div>
+      <div className="health-box" data-testid="settings-voice-health"><span className={caps?.piper ? "health-dot good" : "health-dot"} /> <b>Piper voiceover {caps?.piper ? "ready" : "not installed"}</b><span className={caps?.whisper ? "health-dot good" : "health-dot"} style={{ marginLeft: 14 }} /> <b>whisper.cpp captions {caps?.whisper ? "ready" : "not installed"}</b><button className="setup-button" style={{ marginLeft: "auto" }} data-testid="open-voice-setup-button" onClick={onVoiceSetup}>Voice setup →</button></div>
     </div>
   </div>;
 }

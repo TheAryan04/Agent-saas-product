@@ -4,45 +4,28 @@ import os
 import shutil
 import signal
 import uuid
-import wave
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import voice_setup
+
 RENDER_DIR = Path(os.environ["RENDER_DIR"])
 RENDERER_SCRIPT = Path(os.environ["RENDERER_SCRIPT"])
-PIPER_BIN = os.environ.get("PIPER_BIN", "piper")
-PIPER_MODEL = os.environ.get("PIPER_MODEL", "")
-WHISPER_BIN = os.environ.get("WHISPER_BIN", "whisper-cli")
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "")
 FPS = 30
 
 render_lock = asyncio.Lock()
 
 
 def capabilities() -> Dict[str, Any]:
-    piper = bool(shutil.which(PIPER_BIN)) and bool(PIPER_MODEL) and Path(PIPER_MODEL).exists()
-    whisper = bool(shutil.which(WHISPER_BIN)) and bool(WHISPER_MODEL) and Path(WHISPER_MODEL).exists()
+    voice = voice_setup.status()
     return {
         "remotion": bool(shutil.which("node")) and RENDERER_SCRIPT.exists(),
-        "piper": piper,
-        "whisper": whisper,
-        "piper_fix": "Install Piper and set PIPER_BIN + PIPER_MODEL (.onnx voice) in backend/.env",
-        "whisper_fix": "Build whisper.cpp and set WHISPER_BIN + WHISPER_MODEL (ggml-base.en.bin) in backend/.env",
+        "piper": voice["piper"],
+        "whisper": voice["whisper"],
+        "piper_fix": "open Voice setup to install Piper and a voice",
+        "whisper_fix": "open Voice setup to install whisper.cpp and a caption model",
     }
-
-
-async def run_cmd(*args: str, stdin: Optional[str] = None) -> str:
-    proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate(stdin.encode() if stdin else None)
-    if proc.returncode != 0:
-        raise RuntimeError(f"{Path(args[0]).name} failed: {err.decode()[-400:]}")
-    return out.decode()
-
-
-def wav_seconds(path: Path) -> float:
-    with wave.open(str(path)) as audio:
-        return audio.getnframes() / float(audio.getframerate())
 
 
 async def make_voiceover(project: Dict[str, Any], public: Path) -> None:
@@ -51,9 +34,9 @@ async def make_voiceover(project: Dict[str, Any], public: Path) -> None:
         if not line:
             continue
         out = public / f"vo_{i}.wav"
-        await run_cmd(PIPER_BIN, "--model", PIPER_MODEL, "--output_file", str(out), stdin=line)
+        seconds = await asyncio.to_thread(voice_setup.synthesize, line, out)
         scene["props"]["audio"] = out.name
-        scene["durationSec"] = max(float(scene["durationSec"]), round(wav_seconds(out) + 0.4, 1))
+        scene["durationSec"] = max(float(scene["durationSec"]), round(seconds + 0.5, 1))
 
 
 async def make_captions(project: Dict[str, Any], public: Path) -> List[Dict[str, Any]]:
@@ -61,12 +44,15 @@ async def make_captions(project: Dict[str, Any], public: Path) -> List[Dict[str,
     for scene in project["scenes"]:
         audio = scene["props"].get("audio")
         if audio:
-            base = public / Path(audio).stem
-            await run_cmd(WHISPER_BIN, "-m", WHISPER_MODEL, "-f", str(public / audio), "-oj", "-of", str(base))
-            data = json.loads(Path(f"{base}.json").read_text())
-            for seg in data.get("transcription", []):
-                o = seg["offsets"]
-                captions.append({"start": round(offset + o["from"] / 1000, 2), "end": round(offset + o["to"] / 1000, 2), "text": seg["text"].strip()})
+            segs = await asyncio.to_thread(voice_setup.transcribe, public / audio)
+            words = (scene["props"].get("voiceover") or scene["props"].get("headline", "")).split()
+            counts = [max(1, len(s["text"].split())) for s in segs]
+            cursor = 0
+            for i, seg in enumerate(segs):
+                take = len(words) - cursor if i == len(segs) - 1 else round(counts[i] / sum(counts) * len(words))
+                text = " ".join(words[cursor:cursor + take]) or seg["text"]
+                cursor += take
+                captions.append({"start": round(offset + seg["start"], 2), "end": round(offset + seg["end"], 2), "text": text})
         offset += float(scene["durationSec"])
     return captions
 
