@@ -35,26 +35,25 @@ Build a free, fully local web app that turns a text prompt into an editable moti
 - Backend health, projects, duplicate, SSE pipeline, and render endpoints.
 - README and protected environment compatibility.
 
-## Prioritized backlog
+## Implemented (2026-06, iteration 3)
 
-### P0
+- Real Ollama pipeline: backend/agents/ (schemas, ollama client, definitions, pipeline). Sequential agents, JSON-schema structured output, streaming tokens over SSE, 1 retry on validation failure, scene-count checks, Critic fixes applied.
+- Offline handling: clear ollama_offline / model-missing errors, no fake output.
+- /api/pipeline/continue: edit any agent output, rerun only later agents.
+- Remotion composition shared by preview (@remotion/player) and export (frontend/src/remotion/*, frontend/renderer/render.mjs).
+- Render jobs: POST /api/render -> job id, GET /api/render/{id}, /download, /capabilities (backend/render_jobs.py, Mongo render_jobs).
+- Optional Piper voiceover + whisper.cpp captions behind export toggles (off by default, env PIPER_*/WHISPER_*).
+- Scene drag-drop + up/down reorder; per-agent model/enable settings in localStorage.
+- Frontend split into components/studio/* and hooks/usePipeline.js.
 
-- Connect the Ollama response to per-agent schemas and actual retry-on-validation-failure behavior.
-- Implement real Remotion composition and local FFmpeg MP4 rendering with progress and download URL.
+## Verification status
 
-### P1
-
-- Persist per-agent model/toggle settings and agent context with each run.
-- Add reorder drag/drop and one-agent continuation from edited output.
-- Add real render job status and cancellation.
-
-### P2
-
-- Optional Piper voiceover and whisper.cpp captions behind off-by-default flags.
-- Add project search, version history, and richer template prop editors.
+- Remotion MP4 render verified directly (seed project, ~95s). Offline/model-missing errors verified.
+- NOT yet verified: full real Ollama run end-to-end (Ollama kept dying in the pod; binary at /root/ollama/bin/ollama), render via API from UI, continue flow, Piper/whisper paths. Testing agent not run this iteration.
+- backend/tests/test_frameforge_contracts.py render test is outdated (render now returns a job).
 
 ## Next tasks
 
-1. Add shared Python schemas and six small agent modules.
-2. Connect streaming Ollama structured output to the existing SSE route.
-3. Add a local Remotion render worker and MP4 file response.
+1. Run full Ollama pipeline e2e, fix issues; run testing agent.
+2. Update contract tests for new render/continue APIs.
+3. Render cancellation, project update-in-place, project search/version history.
