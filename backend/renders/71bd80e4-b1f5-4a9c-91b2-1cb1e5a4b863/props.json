@@ -1,0 +1,1 @@
+{"project": {"title": "TEST render", "aspectRatio": "16:9", "brand": {"name": "Test", "primaryColor": "#7CFFCB", "accentColor": "#55D6FF", "background": "#0B1016", "font": "Outfit"}, "scenes": [{"template": "TextReveal", "durationSec": 2.0, "props": {"headline": "Hello"}}, {"template": "CallToAction", "durationSec": 2.0, "props": {"headline": "Go", "button": "Start"}}]}}

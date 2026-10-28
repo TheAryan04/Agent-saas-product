@@ -76,6 +76,10 @@ class RenderJobs:
         self.col = db.render_jobs
         self.procs: Dict[str, Any] = {}
         self.cancelled: set = set()
+        self.tasks: set = set()
+
+    async def reconcile(self):
+        await self.col.update_many({"status": {"$in": ["queued", "running"]}}, {"$set": {"status": "error", "stage": "Render failed", "error": "Interrupted by a server restart"}})
 
     async def cancel(self, job_id: str) -> Optional[Dict[str, Any]]:
         job = await self.get(job_id)
@@ -97,7 +101,9 @@ class RenderJobs:
                "voiceover": voiceover, "captions": captions, "error": None, "download_url": None,
                "created_at": datetime.now(timezone.utc).isoformat()}
         await self.col.insert_one(dict(job))
-        asyncio.create_task(self._run(job["id"], project, voiceover, captions))
+        task = asyncio.create_task(self._run(job["id"], project, voiceover, captions))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
         return job
 
     async def get(self, job_id: str) -> Optional[Dict[str, Any]]:

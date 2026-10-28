@@ -172,6 +172,11 @@ app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
 
 
+@app.on_event("startup")
+async def startup():
+    await jobs.reconcile()
+
+
 @app.on_event("shutdown")
 async def shutdown():
     mongo_client.close()
